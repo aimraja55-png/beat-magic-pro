@@ -395,7 +395,11 @@ function Editor() {
           onClick={generate}
           className="mt-6 w-full rounded-2xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-5 text-lg font-black tracking-wide text-black shadow-[0_10px_40px_-10px_rgba(255,46,136,0.6)] transition active:scale-[0.98] disabled:opacity-40"
         >
-          {stage === "rendering" ? `रेंडरिंग… ${Math.round(progress * 100)}%` : "⚡ GENERATE RAJA STYLE VIDEO"}
+          {stage === "rendering"
+            ? `${phase === "encode" ? "एनकोडिंग MP4" : "रेंडरिंग बीट्स"}… ${Math.round(progress * 100)}%`
+            : stage === "done"
+            ? "✓ फिर से बनाएँ"
+            : "⚡ GENERATE RAJA STYLE VIDEO"}
         </button>
 
         {stage === "rendering" && (
