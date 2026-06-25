@@ -160,6 +160,7 @@ function Editor() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
+  const [phase, setPhase] = useState<"record" | "encode" | "">("");
   const [log, setLog] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [aspect, setAspect] = useState<"9:16" | "16:9" | "1:1">("9:16");
@@ -191,6 +192,8 @@ function Editor() {
     if (!audioFile || !beats || photos.length === 0) return;
     setStage("rendering");
     setProgress(0);
+    setPhase("record");
+    setVideoUrl(null);
     setLog("रेंडर शुरू…");
 
     const dims = aspect === "9:16" ? [1080, 1920] : aspect === "16:9" ? [1920, 1080] : [1080, 1080];
@@ -269,7 +272,7 @@ function Editor() {
       const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
       drawFrame(ctx, item.img, W, H, item.effect, local, punch);
 
-      setProgress(Math.min(0.85, t / beats.duration * 0.85));
+      setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
       requestAnimationFrame(render);
     };
     requestAnimationFrame(render);
@@ -279,9 +282,15 @@ function Editor() {
     rec.stop();
     const webm = await recDone;
     ac.close();
+    setProgress(0.7);
+    setPhase("encode");
 
     setLog("MP4 1080p में कन्वर्ट हो रहा है…");
-    const ff = await getFFmpeg((m) => setLog(m));
+    const ff = await getFFmpeg();
+    ff.on("progress", ({ progress: p }: { progress: number }) => {
+      const pp = Math.max(0, Math.min(1, p));
+      setProgress(0.7 + pp * 0.3);
+    });
     const { fetchFile } = await import("@ffmpeg/util");
     await ff.writeFile("in.webm", await fetchFile(webm));
     await ff.exec([
@@ -300,6 +309,7 @@ function Editor() {
     const mp4 = new Blob([buf], { type: "video/mp4" });
     setVideoUrl(URL.createObjectURL(mp4));
     setProgress(1);
+    setPhase("");
     setStage("done");
     setLog("✓ तैयार है!");
   }
