@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -157,15 +157,23 @@ function drawFrame(
 function Editor() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [beats, setBeats] = useState<Beats | null>(null);
-  const [photos, setPhotos] = useState<File[]>([]);
+  const [slots, setSlots] = useState<(File | null)[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<"record" | "encode" | "">("");
   const [log, setLog] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [aspect, setAspect] = useState<"9:16" | "16:9" | "1:1">("9:16");
+  const [mode, setMode] = useState<"shorts" | "long">("shorts");
+  const [celebrate, setCelebrate] = useState(false);
+
+  const renderIdRef = useRef(0);
+  const lastProgressRef = useRef({ p: 0, t: 0 });
+  const retryRef = useRef(0);
+  const downloadRef = useRef<HTMLAnchorElement>(null);
 
   const photosNeeded = beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
+  const filledCount = slots.filter(Boolean).length;
+  const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
 
   async function onAudio(f: File) {
     setAudioFile(f);
@@ -174,6 +182,8 @@ function Editor() {
     try {
       const b = await analyzeBeats(f);
       setBeats(b);
+      const need = Math.max(4, Math.ceil(b.times.length / 2));
+      setSlots(new Array(need).fill(null));
       setStage("ready");
       setLog(`✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • ${b.times.length} beats detected`);
     } catch (e: any) {
@@ -182,21 +192,63 @@ function Editor() {
     }
   }
 
-  function onPhotos(list: FileList | null) {
-    if (!list) return;
-    const arr = Array.from(list).filter((f) => f.type.startsWith("image/"));
-    setPhotos(arr);
+  function setSlot(idx: number, file: File | null) {
+    setSlots((s) => {
+      const next = [...s];
+      next[idx] = file;
+      return next;
+    });
   }
 
+  function fillSlotsBulk(list: FileList | null) {
+    if (!list) return;
+    const arr = Array.from(list).filter((f) => f.type.startsWith("image/"));
+    setSlots((s) => {
+      const next = [...s];
+      let j = 0;
+      for (let i = 0; i < next.length && j < arr.length; i++) {
+        if (!next[i]) next[i] = arr[j++];
+      }
+      // if more files than slots, replace from start with remainder
+      for (let i = 0; i < next.length && j < arr.length; i++) next[i] = arr[j++];
+      return next;
+    });
+  }
+
+  // Watchdog: if progress stalls > 18s during rendering, force-restart
+  useEffect(() => {
+    if (stage !== "rendering") return;
+    const id = setInterval(() => {
+      const now = performance.now();
+      if (progress >= 1) return;
+      if (progress > lastProgressRef.current.p + 0.001) {
+        lastProgressRef.current = { p: progress, t: now };
+        return;
+      }
+      if (now - lastProgressRef.current.t > 18000 && retryRef.current < 2) {
+        retryRef.current += 1;
+        setLog(`⏱ अटका — ऑटो-रिस्टार्ट (${retryRef.current}/2)…`);
+        renderIdRef.current += 1; // cancels in-flight render loop
+        // restart
+        setTimeout(() => { void generate(); }, 300);
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [stage, progress]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function generate() {
+    const photos = slots.filter(Boolean) as File[];
     if (!audioFile || !beats || photos.length === 0) return;
+    const myId = ++renderIdRef.current;
+    lastProgressRef.current = { p: 0, t: performance.now() };
     setStage("rendering");
     setProgress(0);
     setPhase("record");
     setVideoUrl(null);
+    setCelebrate(false);
     setLog("रेंडर शुरू…");
 
-    const dims = aspect === "9:16" ? [1080, 1920] : aspect === "16:9" ? [1920, 1080] : [1080, 1080];
+    const dims = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
     const [W, H] = dims;
     const FPS = 30;
 
@@ -257,9 +309,8 @@ function Editor() {
     let stop = false;
     audioEl.onended = () => (stop = true);
 
-    const startWall = performance.now();
     const render = () => {
-      if (stop) return;
+      if (stop || renderIdRef.current !== myId) return;
       const t = audioEl.currentTime;
       // find current beat segment
       let i = 0;
@@ -278,10 +329,12 @@ function Editor() {
     requestAnimationFrame(render);
 
     await new Promise<void>((r) => (audioEl.onended = () => r()));
+    if (renderIdRef.current !== myId) return;
     await new Promise((r) => setTimeout(r, 200));
     rec.stop();
     const webm = await recDone;
     ac.close();
+    if (renderIdRef.current !== myId) return;
     setProgress(0.7);
     setPhase("encode");
 
@@ -302,178 +355,415 @@ function Editor() {
       "-movflags", "+faststart",
       "out.mp4",
     ]);
+    if (renderIdRef.current !== myId) return;
     const data = (await ff.readFile("out.mp4")) as Uint8Array;
     // copy into a fresh ArrayBuffer to satisfy Blob typings
     const buf = new Uint8Array(data.byteLength);
     buf.set(data);
     const mp4 = new Blob([buf], { type: "video/mp4" });
-    setVideoUrl(URL.createObjectURL(mp4));
+    const url = URL.createObjectURL(mp4);
+    setVideoUrl(url);
     setProgress(1);
     setPhase("");
     setStage("done");
+    setCelebrate(true);
     setLog("✓ तैयार है!");
+    retryRef.current = 0;
+    // auto-download
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "raja-ai-video.mp4";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, 400);
+    setTimeout(() => setCelebrate(false), 3500);
   }
 
-  const canGenerate = !!beats && photos.length >= 1 && stage !== "rendering" && stage !== "analyzing";
-  const enoughPhotos = photos.length >= photosNeeded;
+  const canGenerate = !!beats && filledCount >= 1 && stage !== "rendering" && stage !== "analyzing";
 
   return (
-    <div className="min-h-screen text-white" style={{ background: "radial-gradient(1200px 800px at 20% -10%, #2a1457 0%, transparent 60%), radial-gradient(900px 700px at 110% 20%, #ff2e88 0%, transparent 55%), #0b0617" }}>
-      <div className="mx-auto max-w-3xl px-5 py-10">
-        <header className="mb-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs tracking-widest uppercase">
+    <div
+      className="min-h-screen text-white"
+      style={{
+        background:
+          "radial-gradient(1200px 800px at 20% -10%, #2a1457 0%, transparent 60%), radial-gradient(900px 700px at 110% 20%, #ff2e88 0%, transparent 55%), #0b0617",
+      }}
+    >
+      <div className="mx-auto max-w-2xl px-5 py-10">
+        <header className="mb-10 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[10px] tracking-[0.3em] uppercase backdrop-blur-xl">
             <span className="h-1.5 w-1.5 rounded-full bg-[#ff2e88]" /> 2026 Edition
           </div>
-          <h1 className="mt-4 text-4xl font-black leading-tight md:text-6xl">
-            Raja AI <span className="bg-gradient-to-r from-[#ff2e88] via-[#ffb347] to-[#7c5cff] bg-clip-text text-transparent">Pro-Editor</span>
+          <h1 className="mt-4 text-4xl font-black leading-tight md:text-5xl">
+            Raja AI{" "}
+            <span className="bg-gradient-to-r from-[#ff2e88] via-[#ffb347] to-[#7c5cff] bg-clip-text text-transparent">
+              Pro-Editor
+            </span>
           </h1>
-          <p className="mt-3 text-white/70">ऑडियो अपलोड करें → बीट्स खुद डिटेक्ट → फोटोज़ डालें → 1080p Shorts-रेडी वीडियो।</p>
         </header>
 
-        {/* Step 1: audio */}
-        <Card title="1 · ऑडियो अपलोड">
-          <UploadBox
-            accept="audio/*"
-            label={audioFile ? audioFile.name : "MP3 / WAV / M4A चुनें"}
-            onFiles={(fl) => fl[0] && onAudio(fl[0])}
-          />
-          {beats && (
-            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-              <Stat label="Duration" value={`${beats.duration.toFixed(1)}s`} />
-              <Stat label="BPM" value={`${beats.bpm}`} />
-              <Stat label="Beats" value={`${beats.times.length}`} />
+        {/* STEP 1: AUDIO */}
+        {!audioFile && (
+          <BigAudioButton onPick={onAudio} loading={stage === "analyzing"} />
+        )}
+
+        {audioFile && beats && (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">🎵 {audioFile.name}</div>
+                <div className="mt-0.5 text-[11px] text-white/60">
+                  {beats.duration.toFixed(1)}s • {beats.bpm} BPM • {beats.times.length} beats
+                </div>
+              </div>
+              <label className="shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
+                बदलें
+                <input
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && onAudio(e.target.files[0])}
+                />
+              </label>
             </div>
-          )}
-        </Card>
-
-        {/* Step 2: photos */}
-        <Card title="2 · फोटो अपलोड" disabled={!beats}>
-          {beats && (
-            <div className="mb-3 rounded-lg border border-[#ff2e88]/40 bg-[#ff2e88]/10 px-3 py-2 text-sm">
-              📸 आपको कम-से-कम <b>{photosNeeded}</b> फोटो चाहिए (बीट के अनुसार).{" "}
-              {photos.length > 0 && (
-                <span className={enoughPhotos ? "text-emerald-300" : "text-amber-300"}>
-                  अभी: {photos.length} {enoughPhotos ? "✓" : `(Smart Loop ऑन — कमी पूरी करेगा)`}
-                </span>
-              )}
-            </div>
-          )}
-          <UploadBox
-            accept="image/*"
-            multiple
-            label={photos.length ? `${photos.length} फोटो सिलेक्टेड` : "फोटोज़ चुनें (multiple)"}
-            onFiles={(fl) => onPhotos(fl)}
-          />
-          {photos.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {photos.slice(0, 12).map((p, i) => (
-                <img key={i} src={URL.createObjectURL(p)} className="h-16 w-16 rounded-md object-cover" alt="" />
-              ))}
-              {photos.length > 12 && <div className="flex h-16 w-16 items-center justify-center rounded-md bg-white/10 text-xs">+{photos.length - 12}</div>}
-            </div>
-          )}
-        </Card>
-
-        {/* Step 3: format + generate */}
-        <Card title="3 · फॉर्मेट चुनें" disabled={!beats}>
-          <div className="flex gap-2">
-            {(["9:16", "1:1", "16:9"] as const).map((a) => (
-              <button
-                key={a}
-                onClick={() => setAspect(a)}
-                className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${aspect === a ? "border-[#ff2e88] bg-[#ff2e88]/20" : "border-white/15 bg-white/5 hover:bg-white/10"}`}
-              >
-                {a === "9:16" ? "Shorts / Reels" : a === "1:1" ? "Square" : "YouTube"}
-                <div className="text-[10px] text-white/50">{a}</div>
-              </button>
-            ))}
-          </div>
-        </Card>
-
-        <button
-          disabled={!canGenerate}
-          onClick={generate}
-          className="mt-6 w-full rounded-2xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-5 text-lg font-black tracking-wide text-black shadow-[0_10px_40px_-10px_rgba(255,46,136,0.6)] transition active:scale-[0.98] disabled:opacity-40"
-        >
-          {stage === "rendering"
-            ? `${phase === "encode" ? "एनकोडिंग MP4" : "रेंडरिंग बीट्स"}… ${Math.round(progress * 100)}%`
-            : stage === "done"
-            ? "✓ फिर से बनाएँ"
-            : "⚡ GENERATE RAJA STYLE VIDEO"}
-        </button>
-
-        {stage === "rendering" && (
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full bg-gradient-to-r from-[#ff2e88] to-[#ffb347] transition-all" style={{ width: `${progress * 100}%` }} />
           </div>
         )}
-        {log && <p className="mt-3 text-center text-xs text-white/60">{log}</p>}
 
-        {videoUrl && (
-          <Card title="✓ आपका वीडियो">
-            <video src={videoUrl} controls className="w-full rounded-lg" />
+        {/* STEP 2: PHOTO SLOTS */}
+        {beats && stage !== "rendering" && stage !== "done" && (
+          <div className="mt-6">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold tracking-wider text-white/80">
+                📸 फोटो भरें — {filledCount}/{photosNeeded}
+              </h2>
+              <label className="cursor-pointer text-xs text-white/60 underline-offset-4 hover:text-white hover:underline">
+                सब एक साथ चुनें
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => fillSlotsBulk(e.target.files)}
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+              {slots.map((f, i) => (
+                <PhotoSlot
+                  key={i}
+                  file={f}
+                  index={i}
+                  onPick={(file) => setSlot(i, file)}
+                  onClear={() => setSlot(i, null)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 3: MODE */}
+        {beats && filledCount >= 1 && stage !== "rendering" && stage !== "done" && (
+          <div className="mt-8">
+            <h2 className="mb-3 text-sm font-semibold tracking-wider text-white/80">
+              🎬 मोड चुनें
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              <ModeCard
+                active={mode === "shorts"}
+                title="Shorts"
+                sub="15–60s • 9:16"
+                onClick={() => setMode("shorts")}
+              />
+              <ModeCard
+                active={mode === "long"}
+                title="Long Video"
+                sub="1m+ • 16:9"
+                onClick={() => setMode("long")}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4: GO */}
+        {beats && filledCount >= 1 && stage !== "rendering" && stage !== "done" && (
+          <button
+            disabled={!canGenerate}
+            onClick={generate}
+            className="group relative mt-8 w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:opacity-40"
+          >
+            <span className="relative z-10">GO ▶</span>
+            <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
+          </button>
+        )}
+
+        {/* RENDERING OVERLAY */}
+        {stage === "rendering" && (
+          <RenderingOverlay
+            progress={progress}
+            phase={phase}
+            log={log}
+          />
+        )}
+
+        {/* DONE */}
+        {stage === "done" && videoUrl && (
+          <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl">
+            <video src={videoUrl} controls className="w-full rounded-xl" />
             <a
+              ref={downloadRef}
               href={videoUrl}
               download="raja-ai-video.mp4"
-              className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-white py-3 font-bold text-black"
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-bold text-black"
             >
-              ⬇ डाउनलोड MP4 (1080p)
+              ⬇ Download MP4 (1080p)
             </a>
-          </Card>
+            <button
+              onClick={() => {
+                setStage("ready");
+                setVideoUrl(null);
+                setProgress(0);
+              }}
+              className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10"
+            >
+              फिर से बनाएँ
+            </button>
+          </div>
         )}
 
-        <footer className="mt-10 text-center text-xs text-white/40">
-          100% browser • कोई API key नहीं चाहिए • आपकी फाइलें कहीं अपलोड नहीं होतीं
+        {celebrate && <Celebration />}
+
+        <footer className="mt-12 text-center text-[11px] text-white/40">
+          100% browser • कोई API key नहीं • फाइलें कहीं अपलोड नहीं होतीं
         </footer>
       </div>
     </div>
   );
 }
 
-function Card({ title, children, disabled }: { title: string; children: React.ReactNode; disabled?: boolean }) {
-  return (
-    <section className={`mt-5 rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-white/80">{title}</h2>
-      {children}
-    </section>
-  );
-}
+/* ---------------- presentational components ---------------- */
 
-function Stat({ label, value }: { label: string; value: string }) {
+function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loading: boolean }) {
+  const ref = useRef<HTMLInputElement>(null);
   return (
-    <div className="rounded-lg border border-white/10 bg-black/30 px-2 py-2">
-      <div className="text-lg font-bold">{value}</div>
-      <div className="text-[10px] uppercase tracking-wider text-white/50">{label}</div>
+    <div className="flex flex-col items-center">
+      <button
+        onClick={() => ref.current?.click()}
+        disabled={loading}
+        className="group relative flex h-64 w-64 items-center justify-center rounded-full bg-gradient-to-br from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] text-black shadow-[0_0_80px_-10px_rgba(255,46,136,0.8)] transition active:scale-95"
+      >
+        <span className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-br from-[#ff2e88] to-[#ffb347] opacity-60 blur-2xl" />
+        <span className="pointer-events-none absolute inset-0 animate-ping rounded-full bg-[#ff2e88]/30" />
+        <div className="relative z-10 flex flex-col items-center">
+          {loading ? (
+            <Spinner size={56} />
+          ) : (
+            <>
+              <div className="text-6xl">🎵</div>
+              <div className="mt-2 text-lg font-black tracking-widest">UPLOAD AUDIO</div>
+              <div className="mt-1 text-[11px] font-semibold opacity-70">MP3 / WAV / M4A</div>
+            </>
+          )}
+        </div>
+        <input
+          ref={ref}
+          type="file"
+          accept="audio/*"
+          className="hidden"
+          onChange={(e) => e.target.files?.[0] && onPick(e.target.files[0])}
+        />
+      </button>
+      <p className="mt-6 text-center text-sm text-white/60">
+        {loading ? "बीट्स स्कैन हो रहे हैं…" : "सबसे पहले अपना गाना चुनें"}
+      </p>
     </div>
   );
 }
 
-function UploadBox({
-  accept,
-  multiple,
-  label,
-  onFiles,
+function PhotoSlot({
+  file,
+  index,
+  onPick,
+  onClear,
 }: {
-  accept: string;
-  multiple?: boolean;
-  label: string;
-  onFiles: (fl: FileList) => void;
+  file: File | null;
+  index: number;
+  onPick: (f: File) => void;
+  onClear: () => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) { setUrl(null); return; }
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+
+  if (file && url) {
+    return (
+      <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/20">
+        <img src={url} alt="" className="h-full w-full object-cover" />
+        <button
+          onClick={onClear}
+          className="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] opacity-0 transition group-hover:opacity-100"
+        >
+          ✕
+        </button>
+      </div>
+    );
+  }
+
   return (
     <button
       onClick={() => ref.current?.click()}
-      className="flex w-full items-center justify-center rounded-xl border-2 border-dashed border-white/20 bg-black/20 px-4 py-6 text-sm font-medium text-white/80 transition hover:border-[#ff2e88] hover:bg-[#ff2e88]/10"
+      className="relative flex aspect-square items-center justify-center rounded-xl border-2 border-dashed border-[#ff2e88]/50 bg-[#ff2e88]/5 text-white/70 backdrop-blur transition hover:border-[#ff2e88] hover:bg-[#ff2e88]/15"
     >
+      <span className="pointer-events-none absolute inset-0 animate-pulse rounded-xl bg-[#ff2e88]/10" />
+      <div className="relative z-10 flex flex-col items-center">
+        <div className="text-2xl">+</div>
+        <div className="mt-1 text-[10px] font-semibold tracking-wider">SLOT {index + 1}</div>
+      </div>
       <input
         ref={ref}
         type="file"
-        accept={accept}
-        multiple={multiple}
+        accept="image/*"
         className="hidden"
-        onChange={(e) => e.target.files && onFiles(e.target.files)}
+        onChange={(e) => e.target.files?.[0] && onPick(e.target.files[0])}
       />
-      ⬆ {label}
     </button>
+  );
+}
+
+function ModeCard({
+  active,
+  title,
+  sub,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  sub: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-2xl border p-5 text-left backdrop-blur-xl transition ${
+        active
+          ? "border-[#ff2e88] bg-[#ff2e88]/15 shadow-[0_10px_40px_-15px_rgba(255,46,136,0.6)]"
+          : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+      }`}
+    >
+      <div className="text-lg font-black">{title}</div>
+      <div className="mt-1 text-xs text-white/60">{sub}</div>
+    </button>
+  );
+}
+
+function RenderingOverlay({
+  progress,
+  phase,
+  log,
+}: {
+  progress: number;
+  phase: "record" | "encode" | "";
+  log: string;
+}) {
+  const pct = Math.round(progress * 100);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-2xl">
+      <div className="flex flex-col items-center">
+        <CircularSpinner percent={pct} />
+        <div className="mt-6 text-2xl font-black tracking-widest">प्रोसेसिंग…</div>
+        <div className="mt-2 text-xs uppercase tracking-[0.3em] text-white/60">
+          {phase === "encode" ? "Encoding MP4" : "Rendering Beats"}
+        </div>
+        {log && <div className="mt-3 max-w-xs text-center text-[11px] text-white/50">{log}</div>}
+      </div>
+    </div>
+  );
+}
+
+function CircularSpinner({ percent }: { percent: number }) {
+  const size = 160;
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - (percent / 100) * c;
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <defs>
+          <linearGradient id="sp" x1="0" x2="1">
+            <stop offset="0%" stopColor="#ff2e88" />
+            <stop offset="100%" stopColor="#ffb347" />
+          </linearGradient>
+        </defs>
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} fill="none" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke="url(#sp)"
+          strokeWidth={stroke}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          style={{ transition: "stroke-dashoffset 0.3s ease" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="text-3xl font-black">{percent}%</div>
+      </div>
+      <div className="absolute inset-0 -z-10 animate-pulse rounded-full bg-[#ff2e88]/20 blur-3xl" />
+    </div>
+  );
+}
+
+function Spinner({ size = 32 }: { size?: number }) {
+  return (
+    <div
+      className="animate-spin rounded-full border-4 border-black/20 border-t-black"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+function Celebration() {
+  const pieces = Array.from({ length: 60 });
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
+      {pieces.map((_, i) => {
+        const left = Math.random() * 100;
+        const delay = Math.random() * 0.5;
+        const dur = 2 + Math.random() * 1.5;
+        const colors = ["#ff2e88", "#ffb347", "#7c5cff", "#4ade80", "#38bdf8"];
+        const bg = colors[i % colors.length];
+        return (
+          <span
+            key={i}
+            className="absolute top-[-20px] block h-3 w-2 rounded-sm"
+            style={{
+              left: `${left}%`,
+              background: bg,
+              animation: `confetti-fall ${dur}s ${delay}s linear forwards`,
+            }}
+          />
+        );
+      })}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="animate-[scale-in_0.4s_ease-out] rounded-full bg-white/10 px-8 py-4 text-2xl font-black backdrop-blur-2xl">
+          🎉 तैयार है!
+        </div>
+      </div>
+      <style>{`
+        @keyframes confetti-fall {
+          to { transform: translateY(110vh) rotate(720deg); opacity: 0.8; }
+        }
+      `}</style>
+    </div>
   );
 }
