@@ -346,6 +346,12 @@ function Editor() {
         lastProgressRef.current = { p: progress, t: now };
         return;
       }
+      if (phase === "encode") {
+        if (now - lastProgressRef.current.t > 25_000) {
+          setLog("MP4 finalization worker में जारी है — buffer flush हो रहा है…");
+        }
+        return;
+      }
       if (now - lastProgressRef.current.t > 18000 && retryRef.current < 2) {
         retryRef.current += 1;
         setLog(`⏱ अटका — ऑटो-रिस्टार्ट (${retryRef.current}/2)…`);
@@ -355,7 +361,7 @@ function Editor() {
       }
     }, 2000);
     return () => clearInterval(id);
-  }, [stage, progress]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stage, phase, progress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function generate() {
     const photos = slots.filter(Boolean) as File[];

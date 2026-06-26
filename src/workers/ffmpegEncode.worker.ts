@@ -22,7 +22,7 @@ type EncodeWorkerScope = typeof globalThis & {
   onmessage: ((event: MessageEvent<EncodeRequest>) => void) | null;
 };
 
-const workerScope = self as EncodeWorkerScope;
+const workerScope = self as unknown as EncodeWorkerScope;
 let ffmpeg: FFmpeg | null = null;
 let loaded = false;
 const recentLogs: string[] = [];
