@@ -440,7 +440,17 @@ function Editor() {
       await audioEl.play();
 
       let stop = false;
-      audioEl.onended = () => (stop = true);
+      const ended = new Promise<void>((resolve) => {
+        audioEl.onended = () => {
+          stop = true;
+          resolve();
+        };
+        audioEl.onerror = () => {
+          stop = true;
+          resolve();
+        };
+      });
+      let raf = 0;
 
       const render = () => {
         if (stop || renderIdRef.current !== myId) return;
@@ -457,11 +467,12 @@ function Editor() {
         drawFrame(ctx, item.img, W, H, item.effect, local, punch);
 
         setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
-        requestAnimationFrame(render);
+        raf = requestAnimationFrame(render);
       };
-      requestAnimationFrame(render);
+      raf = requestAnimationFrame(render);
 
-      await new Promise<void>((r) => (audioEl.onended = () => r()));
+      await ended;
+      cancelAnimationFrame(raf);
       if (renderIdRef.current !== myId) return;
       await new Promise((r) => setTimeout(r, 350));
       rec.requestData();
