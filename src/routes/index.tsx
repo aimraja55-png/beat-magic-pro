@@ -360,6 +360,7 @@ function Editor() {
   async function generate() {
     const photos = slots.filter(Boolean) as File[];
     if (!audioFile || !beats || photos.length === 0) return;
+    const outputHandle = await requestOutputFileHandle();
     const myId = ++renderIdRef.current;
     lastProgressRef.current = { p: 0, t: performance.now() };
     setStage("rendering");
@@ -373,11 +374,7 @@ function Editor() {
     const [W, H] = dims;
     const FPS = 30;
 
-    let outputHandle: SavePickerHandle | null = null;
-
     try {
-      outputHandle = await requestOutputFileHandle();
-
       // load images
       const imageUrls: string[] = [];
       const imgs = await Promise.all(
