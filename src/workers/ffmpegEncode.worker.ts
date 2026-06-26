@@ -16,7 +16,13 @@ type WorkerResponse =
   | { type: "done"; buffer: ArrayBuffer }
   | { type: "error"; message: string; category: "memory" | "format" | "timeout" | "unknown"; logs: string[] };
 
-const workerScope = self as DedicatedWorkerGlobalScope;
+type ErrorCategory = Extract<WorkerResponse, { type: "error" }>["category"];
+type EncodeWorkerScope = typeof globalThis & {
+  postMessage: (message: WorkerResponse, transfer?: Transferable[]) => void;
+  onmessage: ((event: MessageEvent<EncodeRequest>) => void) | null;
+};
+
+const workerScope = self as EncodeWorkerScope;
 let ffmpeg: FFmpeg | null = null;
 let loaded = false;
 const recentLogs: string[] = [];
@@ -31,7 +37,7 @@ function rememberLog(message: string) {
   post({ type: "log", message });
 }
 
-function classifyError(error: unknown): WorkerResponse["category"] {
+function classifyError(error: unknown): ErrorCategory {
   const text = `${error instanceof Error ? error.message : String(error)}\n${recentLogs.join("\n")}`.toLowerCase();
   if (text.includes("memory") || text.includes("allocation") || text.includes("out of bounds")) return "memory";
   if (text.includes("invalid data") || text.includes("format") || text.includes("codec") || text.includes("mux")) return "format";

@@ -373,133 +373,146 @@ function Editor() {
     const [W, H] = dims;
     const FPS = 30;
 
-    // load images
-    const imgs = await Promise.all(
-      photos.map(
-        (f) =>
-          new Promise<HTMLImageElement>((res, rej) => {
-            const i = new Image();
-            i.onload = () => res(i);
-            i.onerror = rej;
-            i.src = URL.createObjectURL(f);
-          }),
-      ),
-    );
+    let outputHandle: SavePickerHandle | null = null;
 
-    // Smart Loop & Reverse — extend to cover all beats
-    const segments = beats.times.length;
-    const seq: { img: HTMLImageElement; effect: Effect }[] = [];
-    for (let i = 0; i < segments; i++) {
-      const cycle = Math.floor(i / imgs.length);
-      const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-      seq.push({ img: imgs[idx], effect: EFFECTS[i % EFFECTS.length] });
-    }
+    try {
+      outputHandle = await requestOutputFileHandle();
 
-    // canvas + audio → MediaRecorder
-    const canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext("2d")!;
+      // load images
+      const imageUrls: string[] = [];
+      const imgs = await Promise.all(
+        photos.map(
+          (f) =>
+            new Promise<HTMLImageElement>((res, rej) => {
+              const i = new Image();
+              const objectUrl = URL.createObjectURL(f);
+              imageUrls.push(objectUrl);
+              i.onload = () => res(i);
+              i.onerror = rej;
+              i.src = objectUrl;
+            }),
+        ),
+      );
 
-    const audioEl = new Audio(URL.createObjectURL(audioFile));
-    audioEl.crossOrigin = "anonymous";
-    await new Promise((r) => (audioEl.oncanplaythrough = r));
+      // Smart Loop & Reverse — extend to cover all beats
+      const segments = beats.times.length;
+      const seq: { img: HTMLImageElement; effect: Effect }[] = [];
+      for (let i = 0; i < segments; i++) {
+        const cycle = Math.floor(i / imgs.length);
+        const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
+        seq.push({ img: imgs[idx], effect: EFFECTS[i % EFFECTS.length] });
+      }
 
-    const ac = new AudioContext();
-    const src = ac.createMediaElementSource(audioEl);
-    const dest = ac.createMediaStreamDestination();
-    src.connect(dest);
-    src.connect(ac.destination);
+      // canvas + audio → MediaRecorder
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d")!;
 
-    const stream = canvas.captureStream(FPS);
-    dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+      const audioUrl = URL.createObjectURL(audioFile);
+      const audioEl = new Audio(audioUrl);
+      audioEl.crossOrigin = "anonymous";
+      await new Promise((r) => (audioEl.oncanplaythrough = r));
 
-    const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-      ? "video/webm;codecs=vp9,opus"
-      : "video/webm;codecs=vp8,opus";
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
-    const chunks: Blob[] = [];
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: "video/webm" }))));
+      const ac = new AudioContext();
+      const src = ac.createMediaElementSource(audioEl);
+      const dest = ac.createMediaStreamDestination();
+      src.connect(dest);
+      src.connect(ac.destination);
 
-    rec.start(250);
-    await ac.resume();
-    audioEl.currentTime = 0;
-    await audioEl.play();
+      const stream = canvas.captureStream(FPS);
+      dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
 
-    let stop = false;
-    audioEl.onended = () => (stop = true);
+      const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : "video/webm;codecs=vp8,opus";
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: "video/webm" }))));
 
-    const render = () => {
-      if (stop || renderIdRef.current !== myId) return;
-      const t = audioEl.currentTime;
-      // find current beat segment
-      let i = 0;
-      while (i < beats.times.length - 1 && beats.times[i + 1] <= t) i++;
-      const segStart = beats.times[i] ?? 0;
-      const segEnd = beats.times[i + 1] ?? beats.duration;
-      const segLen = Math.max(0.05, segEnd - segStart);
-      const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
-      const punch = Math.max(0, 1 - local * 4); // strong at beat, decays
-      const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
-      drawFrame(ctx, item.img, W, H, item.effect, local, punch);
+      rec.start(250);
+      await ac.resume();
+      audioEl.currentTime = 0;
+      await audioEl.play();
 
-      setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
+      let stop = false;
+      audioEl.onended = () => (stop = true);
+
+      const render = () => {
+        if (stop || renderIdRef.current !== myId) return;
+        const t = audioEl.currentTime;
+        // find current beat segment
+        let i = 0;
+        while (i < beats.times.length - 1 && beats.times[i + 1] <= t) i++;
+        const segStart = beats.times[i] ?? 0;
+        const segEnd = beats.times[i + 1] ?? beats.duration;
+        const segLen = Math.max(0.05, segEnd - segStart);
+        const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
+        const punch = Math.max(0, 1 - local * 4); // strong at beat, decays
+        const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
+        drawFrame(ctx, item.img, W, H, item.effect, local, punch);
+
+        setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
+        requestAnimationFrame(render);
+      };
       requestAnimationFrame(render);
-    };
-    requestAnimationFrame(render);
 
-    await new Promise<void>((r) => (audioEl.onended = () => r()));
-    if (renderIdRef.current !== myId) return;
-    await new Promise((r) => setTimeout(r, 200));
-    rec.stop();
-    const webm = await recDone;
-    ac.close();
-    if (renderIdRef.current !== myId) return;
-    setProgress(0.7);
-    setPhase("encode");
+      await new Promise<void>((r) => (audioEl.onended = () => r()));
+      if (renderIdRef.current !== myId) return;
+      await new Promise((r) => setTimeout(r, 350));
+      rec.requestData();
+      await new Promise((r) => setTimeout(r, 150));
+      rec.stop();
+      const webm = await recDone;
+      stream.getTracks().forEach((track) => track.stop());
+      await ac.close();
+      URL.revokeObjectURL(audioUrl);
+      imageUrls.forEach((url) => URL.revokeObjectURL(url));
+      if (renderIdRef.current !== myId) return;
+      setProgress(0.7);
+      setPhase("encode");
 
-    setLog("MP4 1080p में कन्वर्ट हो रहा है…");
-    const ff = await getFFmpeg();
-    ff.on("progress", ({ progress: p }: { progress: number }) => {
-      const pp = Math.max(0, Math.min(1, p));
-      setProgress(0.7 + pp * 0.3);
-    });
-    const { fetchFile } = await import("@ffmpeg/util");
-    await ff.writeFile("in.webm", await fetchFile(webm));
-    await ff.exec([
-      "-i", "in.webm",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-      "-pix_fmt", "yuv420p",
-      "-vf", `scale=${W}:${H}`,
-      "-c:a", "aac", "-b:a", "192k",
-      "-movflags", "+faststart",
-      "out.mp4",
-    ]);
-    if (renderIdRef.current !== myId) return;
-    const data = (await ff.readFile("out.mp4")) as Uint8Array;
-    // copy into a fresh ArrayBuffer to satisfy Blob typings
-    const buf = new Uint8Array(data.byteLength);
-    buf.set(data);
-    const mp4 = new Blob([buf], { type: "video/mp4" });
-    const url = URL.createObjectURL(mp4);
-    setVideoUrl(url);
-    setProgress(1);
-    setPhase("");
-    setStage("done");
-    setCelebrate(true);
-    setLog("✓ तैयार है!");
-    retryRef.current = 0;
-    // auto-download
-    setTimeout(() => {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "raja-ai-video.mp4";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }, 400);
-    setTimeout(() => setCelebrate(false), 3500);
+      setLog("MP4 1080p finalization worker में चल रहा है…");
+      const webmBuffer = await webm.arrayBuffer();
+      const mp4Buffer = await encodeWebmInWorker({
+        webmBuffer,
+        width: W,
+        height: H,
+        fps: FPS,
+        duration: beats.duration,
+        onProgress: (p, message) => {
+          const pp = Math.max(0, Math.min(1, p));
+          setProgress(0.7 + pp * 0.3);
+          if (message) setLog(`${message}…`);
+        },
+      });
+      if (renderIdRef.current !== myId) return;
+
+      const mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+      if (outputHandle) {
+        setLog("वीडियो फाइल save हो रही है…");
+        await saveWithFileHandle(outputHandle, mp4);
+      }
+
+      const url = URL.createObjectURL(mp4);
+      setVideoUrl(url);
+      setProgress(1);
+      setPhase("");
+      setStage("done");
+      setCelebrate(true);
+      setLog(outputHandle ? "✓ तैयार है और सेव हो गया!" : "✓ तैयार है!");
+      retryRef.current = 0;
+      if (!outputHandle) setTimeout(() => autoDownload(url), 400);
+      setTimeout(() => setCelebrate(false), 3500);
+    } catch (error) {
+      console.error("[Raja AI] Rendering finalization failed", error);
+      if (renderIdRef.current !== myId) return;
+      setStage("ready");
+      setPhase("");
+      setProgress(0);
+      setLog(`Finalization error: ${getRenderErrorMessage(error)}`);
+    }
   }
 
   const canGenerate = !!beats && filledCount >= 1 && stage !== "rendering" && stage !== "analyzing";
