@@ -20,6 +20,27 @@ function Index() {
 /* ---------------- types ---------------- */
 type Beats = { times: number[]; bpm: number; duration: number };
 type Stage = "idle" | "analyzing" | "ready" | "rendering" | "done";
+type SavePickerHandle = {
+  queryPermission?: (descriptor: { mode: "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (descriptor: { mode: "readwrite" }) => Promise<PermissionState>;
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+    abort?: () => Promise<void>;
+  }>;
+};
+type SavePickerWindow = Window &
+  typeof globalThis & {
+    showSaveFilePicker?: (options: {
+      suggestedName: string;
+      types: { description: string; accept: Record<string, string[]> }[];
+    }) => Promise<SavePickerHandle>;
+  };
+type EncodeWorkerMessage =
+  | { type: "progress"; progress: number; message?: string }
+  | { type: "log"; message: string }
+  | { type: "done"; buffer: ArrayBuffer }
+  | { type: "error"; message: string; category: "memory" | "format" | "timeout" | "unknown"; logs: string[] };
 
 /* ---------------- Beat detection (Web Audio, energy-based onset) ---------------- */
 async function analyzeBeats(file: File): Promise<Beats> {
@@ -60,25 +81,125 @@ async function analyzeBeats(file: File): Promise<Beats> {
   return { times: beats, bpm, duration };
 }
 
-/* ---------------- ffmpeg.wasm loader (singleton) ---------------- */
-let ffmpegPromise: Promise<any> | null = null;
-async function getFFmpeg(onLog?: (m: string) => void) {
-  if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
-      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-      const { toBlobURL } = await import("@ffmpeg/util");
-      const ff = new FFmpeg();
-      const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
-      await ff.load({
-        coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
-      });
-      return ff;
-    })();
+/* ---------------- Finalization worker + save helpers ---------------- */
+async function requestOutputFileHandle(): Promise<SavePickerHandle | null> {
+  const picker = (window as SavePickerWindow).showSaveFilePicker;
+  if (!picker) return null;
+
+  try {
+    const handle = await picker({
+      suggestedName: "raja-ai-video.mp4",
+      types: [{ description: "MP4 Video", accept: { "video/mp4": [".mp4"] } }],
+    });
+    let permission: PermissionState = "granted";
+    if (handle.queryPermission) permission = await handle.queryPermission({ mode: "readwrite" });
+    if (permission !== "granted" && handle.requestPermission) {
+      permission = await handle.requestPermission({ mode: "readwrite" });
+    }
+    if (permission !== "granted") {
+      console.warn("[Raja AI] File System write permission was not granted; falling back to browser download.");
+      return null;
+    }
+    return handle;
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === "AbortError")) {
+      console.warn("[Raja AI] File System Access API failed; falling back to browser download.", error);
+    }
+    return null;
   }
-  const ff = await ffmpegPromise;
-  if (onLog) ff.on("log", ({ message }: any) => onLog(message));
-  return ff;
+}
+
+async function saveWithFileHandle(handle: SavePickerHandle, blob: Blob) {
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    await writable.abort?.();
+    throw error;
+  }
+}
+
+function autoDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "raja-ai-video.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function getRenderErrorMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  const text = raw.toLowerCase();
+  if (text.includes("memory") || text.includes("allocation") || text.includes("out of bounds")) {
+    return "Memory overflow during MP4 finalization. कृपया कम/छोटी photos या छोटा audio इस्तेमाल करें.";
+  }
+  if (text.includes("format") || text.includes("codec") || text.includes("invalid data") || text.includes("mux")) {
+    return "Format mismatch during finalization. कृपया दूसरा audio/photo format इस्तेमाल करें.";
+  }
+  if (text.includes("stalled") || text.includes("timeout") || text.includes("aborted")) {
+    return "Finalization timeout हुआ. Browser ने encoder को रोक दिया — छोटा video या fewer photos try करें.";
+  }
+  return raw || "Unknown rendering error";
+}
+
+function encodeWebmInWorker({
+  webmBuffer,
+  width,
+  height,
+  fps,
+  duration,
+  onProgress,
+}: {
+  webmBuffer: ArrayBuffer;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  onProgress: (progress: number, message?: string) => void;
+}) {
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    const worker = new Worker(new URL("../workers/ffmpegEncode.worker.ts", import.meta.url), { type: "module" });
+    let settled = false;
+    let lastSignalAt = performance.now();
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(stallTimer);
+      worker.terminate();
+      callback();
+    };
+
+    const stallTimer = window.setInterval(() => {
+      if (performance.now() - lastSignalAt > 60_000) {
+        finish(() => reject(new Error("MP4 finalization stalled after 60 seconds without encoder progress.")));
+      }
+    }, 3000);
+
+    worker.onmessage = ({ data }: MessageEvent<EncodeWorkerMessage>) => {
+      lastSignalAt = performance.now();
+      if (data.type === "progress") {
+        onProgress(data.progress, data.message);
+      } else if (data.type === "log") {
+        if (/memory|allocation|invalid data|format|codec|mux|error/i.test(data.message)) {
+          console.warn("[Raja AI Encoder]", data.message);
+        }
+      } else if (data.type === "done") {
+        finish(() => resolve(data.buffer));
+      } else if (data.type === "error") {
+        console.error("[Raja AI Encoder]", data.category, data.message, data.logs);
+        finish(() => reject(new Error(`${data.category}: ${data.message}`)));
+      }
+    };
+
+    worker.onerror = (event) => {
+      finish(() => reject(new Error(event.message || "Encoder worker crashed during MP4 finalization.")));
+    };
+
+    worker.postMessage({ type: "encode", webmBuffer, width, height, fps, duration }, [webmBuffer]);
+  });
 }
 
 /* ---------------- Effects per beat ---------------- */
