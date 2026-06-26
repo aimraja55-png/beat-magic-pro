@@ -20,6 +20,27 @@ function Index() {
 /* ---------------- types ---------------- */
 type Beats = { times: number[]; bpm: number; duration: number };
 type Stage = "idle" | "analyzing" | "ready" | "rendering" | "done";
+type SavePickerHandle = {
+  queryPermission?: (descriptor: { mode: "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (descriptor: { mode: "readwrite" }) => Promise<PermissionState>;
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+    abort?: () => Promise<void>;
+  }>;
+};
+type SavePickerWindow = Window &
+  typeof globalThis & {
+    showSaveFilePicker?: (options: {
+      suggestedName: string;
+      types: { description: string; accept: Record<string, string[]> }[];
+    }) => Promise<SavePickerHandle>;
+  };
+type EncodeWorkerMessage =
+  | { type: "progress"; progress: number; message?: string }
+  | { type: "log"; message: string }
+  | { type: "done"; buffer: ArrayBuffer }
+  | { type: "error"; message: string; category: "memory" | "format" | "timeout" | "unknown"; logs: string[] };
 
 /* ---------------- Beat detection (Web Audio, energy-based onset) ---------------- */
 async function analyzeBeats(file: File): Promise<Beats> {
@@ -60,25 +81,125 @@ async function analyzeBeats(file: File): Promise<Beats> {
   return { times: beats, bpm, duration };
 }
 
-/* ---------------- ffmpeg.wasm loader (singleton) ---------------- */
-let ffmpegPromise: Promise<any> | null = null;
-async function getFFmpeg(onLog?: (m: string) => void) {
-  if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
-      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-      const { toBlobURL } = await import("@ffmpeg/util");
-      const ff = new FFmpeg();
-      const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
-      await ff.load({
-        coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
-      });
-      return ff;
-    })();
+/* ---------------- Finalization worker + save helpers ---------------- */
+async function requestOutputFileHandle(): Promise<SavePickerHandle | null> {
+  const picker = (window as SavePickerWindow).showSaveFilePicker;
+  if (!picker) return null;
+
+  try {
+    const handle = await picker({
+      suggestedName: "raja-ai-video.mp4",
+      types: [{ description: "MP4 Video", accept: { "video/mp4": [".mp4"] } }],
+    });
+    let permission: PermissionState = "granted";
+    if (handle.queryPermission) permission = await handle.queryPermission({ mode: "readwrite" });
+    if (permission !== "granted" && handle.requestPermission) {
+      permission = await handle.requestPermission({ mode: "readwrite" });
+    }
+    if (permission !== "granted") {
+      console.warn("[Raja AI] File System write permission was not granted; falling back to browser download.");
+      return null;
+    }
+    return handle;
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === "AbortError")) {
+      console.warn("[Raja AI] File System Access API failed; falling back to browser download.", error);
+    }
+    return null;
   }
-  const ff = await ffmpegPromise;
-  if (onLog) ff.on("log", ({ message }: any) => onLog(message));
-  return ff;
+}
+
+async function saveWithFileHandle(handle: SavePickerHandle, blob: Blob) {
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    await writable.abort?.();
+    throw error;
+  }
+}
+
+function autoDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "raja-ai-video.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function getRenderErrorMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  const text = raw.toLowerCase();
+  if (text.includes("memory") || text.includes("allocation") || text.includes("out of bounds")) {
+    return "Memory overflow during MP4 finalization. कृपया कम/छोटी photos या छोटा audio इस्तेमाल करें.";
+  }
+  if (text.includes("format") || text.includes("codec") || text.includes("invalid data") || text.includes("mux")) {
+    return "Format mismatch during finalization. कृपया दूसरा audio/photo format इस्तेमाल करें.";
+  }
+  if (text.includes("stalled") || text.includes("timeout") || text.includes("aborted")) {
+    return "Finalization timeout हुआ. Browser ने encoder को रोक दिया — छोटा video या fewer photos try करें.";
+  }
+  return raw || "Unknown rendering error";
+}
+
+function encodeWebmInWorker({
+  webmBuffer,
+  width,
+  height,
+  fps,
+  duration,
+  onProgress,
+}: {
+  webmBuffer: ArrayBuffer;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  onProgress: (progress: number, message?: string) => void;
+}) {
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    const worker = new Worker(new URL("../workers/ffmpegEncode.worker.ts", import.meta.url), { type: "module" });
+    let settled = false;
+    let lastSignalAt = performance.now();
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(stallTimer);
+      worker.terminate();
+      callback();
+    };
+
+    const stallTimer = window.setInterval(() => {
+      if (performance.now() - lastSignalAt > 60_000) {
+        finish(() => reject(new Error("MP4 finalization stalled after 60 seconds without encoder progress.")));
+      }
+    }, 3000);
+
+    worker.onmessage = ({ data }: MessageEvent<EncodeWorkerMessage>) => {
+      lastSignalAt = performance.now();
+      if (data.type === "progress") {
+        onProgress(data.progress, data.message);
+      } else if (data.type === "log") {
+        if (/memory|allocation|invalid data|format|codec|mux|error/i.test(data.message)) {
+          console.warn("[Raja AI Encoder]", data.message);
+        }
+      } else if (data.type === "done") {
+        finish(() => resolve(data.buffer));
+      } else if (data.type === "error") {
+        console.error("[Raja AI Encoder]", data.category, data.message, data.logs);
+        finish(() => reject(new Error(`${data.category}: ${data.message}`)));
+      }
+    };
+
+    worker.onerror = (event) => {
+      finish(() => reject(new Error(event.message || "Encoder worker crashed during MP4 finalization.")));
+    };
+
+    worker.postMessage({ type: "encode", webmBuffer, width, height, fps, duration }, [webmBuffer]);
+  });
 }
 
 /* ---------------- Effects per beat ---------------- */
@@ -225,6 +346,12 @@ function Editor() {
         lastProgressRef.current = { p: progress, t: now };
         return;
       }
+      if (phase === "encode") {
+        if (now - lastProgressRef.current.t > 25_000) {
+          setLog("MP4 finalization worker में जारी है — buffer flush हो रहा है…");
+        }
+        return;
+      }
       if (now - lastProgressRef.current.t > 18000 && retryRef.current < 2) {
         retryRef.current += 1;
         setLog(`⏱ अटका — ऑटो-रिस्टार्ट (${retryRef.current}/2)…`);
@@ -234,11 +361,12 @@ function Editor() {
       }
     }, 2000);
     return () => clearInterval(id);
-  }, [stage, progress]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stage, phase, progress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function generate() {
     const photos = slots.filter(Boolean) as File[];
     if (!audioFile || !beats || photos.length === 0) return;
+    const outputHandle = await requestOutputFileHandle();
     const myId = ++renderIdRef.current;
     lastProgressRef.current = { p: 0, t: performance.now() };
     setStage("rendering");
@@ -252,133 +380,153 @@ function Editor() {
     const [W, H] = dims;
     const FPS = 30;
 
-    // load images
-    const imgs = await Promise.all(
-      photos.map(
-        (f) =>
-          new Promise<HTMLImageElement>((res, rej) => {
-            const i = new Image();
-            i.onload = () => res(i);
-            i.onerror = rej;
-            i.src = URL.createObjectURL(f);
-          }),
-      ),
-    );
+    try {
+      // load images
+      const imageUrls: string[] = [];
+      const imgs = await Promise.all(
+        photos.map(
+          (f) =>
+            new Promise<HTMLImageElement>((res, rej) => {
+              const i = new Image();
+              const objectUrl = URL.createObjectURL(f);
+              imageUrls.push(objectUrl);
+              i.onload = () => res(i);
+              i.onerror = rej;
+              i.src = objectUrl;
+            }),
+        ),
+      );
 
-    // Smart Loop & Reverse — extend to cover all beats
-    const segments = beats.times.length;
-    const seq: { img: HTMLImageElement; effect: Effect }[] = [];
-    for (let i = 0; i < segments; i++) {
-      const cycle = Math.floor(i / imgs.length);
-      const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-      seq.push({ img: imgs[idx], effect: EFFECTS[i % EFFECTS.length] });
+      // Smart Loop & Reverse — extend to cover all beats
+      const segments = beats.times.length;
+      const seq: { img: HTMLImageElement; effect: Effect }[] = [];
+      for (let i = 0; i < segments; i++) {
+        const cycle = Math.floor(i / imgs.length);
+        const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
+        seq.push({ img: imgs[idx], effect: EFFECTS[i % EFFECTS.length] });
+      }
+
+      // canvas + audio → MediaRecorder
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d")!;
+
+      const audioUrl = URL.createObjectURL(audioFile);
+      const audioEl = new Audio(audioUrl);
+      audioEl.crossOrigin = "anonymous";
+      await new Promise((r) => (audioEl.oncanplaythrough = r));
+
+      const ac = new AudioContext();
+      const src = ac.createMediaElementSource(audioEl);
+      const dest = ac.createMediaStreamDestination();
+      src.connect(dest);
+      src.connect(ac.destination);
+
+      const stream = canvas.captureStream(FPS);
+      dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+
+      const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : "video/webm;codecs=vp8,opus";
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: "video/webm" }))));
+
+      rec.start(250);
+      await ac.resume();
+      audioEl.currentTime = 0;
+      await audioEl.play();
+
+      let stop = false;
+      const ended = new Promise<void>((resolve) => {
+        audioEl.onended = () => {
+          stop = true;
+          resolve();
+        };
+        audioEl.onerror = () => {
+          stop = true;
+          resolve();
+        };
+      });
+      let raf = 0;
+
+      const render = () => {
+        if (stop || renderIdRef.current !== myId) return;
+        const t = audioEl.currentTime;
+        // find current beat segment
+        let i = 0;
+        while (i < beats.times.length - 1 && beats.times[i + 1] <= t) i++;
+        const segStart = beats.times[i] ?? 0;
+        const segEnd = beats.times[i + 1] ?? beats.duration;
+        const segLen = Math.max(0.05, segEnd - segStart);
+        const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
+        const punch = Math.max(0, 1 - local * 4); // strong at beat, decays
+        const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
+        drawFrame(ctx, item.img, W, H, item.effect, local, punch);
+
+        setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
+        raf = requestAnimationFrame(render);
+      };
+      raf = requestAnimationFrame(render);
+
+      await ended;
+      cancelAnimationFrame(raf);
+      if (renderIdRef.current !== myId) return;
+      await new Promise((r) => setTimeout(r, 350));
+      rec.requestData();
+      await new Promise((r) => setTimeout(r, 150));
+      rec.stop();
+      const webm = await recDone;
+      stream.getTracks().forEach((track) => track.stop());
+      await ac.close();
+      URL.revokeObjectURL(audioUrl);
+      imageUrls.forEach((url) => URL.revokeObjectURL(url));
+      if (renderIdRef.current !== myId) return;
+      setProgress(0.7);
+      setPhase("encode");
+
+      setLog("MP4 1080p finalization worker में चल रहा है…");
+      const webmBuffer = await webm.arrayBuffer();
+      const mp4Buffer = await encodeWebmInWorker({
+        webmBuffer,
+        width: W,
+        height: H,
+        fps: FPS,
+        duration: beats.duration,
+        onProgress: (p, message) => {
+          const pp = Math.max(0, Math.min(1, p));
+          setProgress(0.7 + pp * 0.3);
+          if (message) setLog(`${message}…`);
+        },
+      });
+      if (renderIdRef.current !== myId) return;
+
+      const mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+      if (outputHandle) {
+        setLog("वीडियो फाइल save हो रही है…");
+        await saveWithFileHandle(outputHandle, mp4);
+      }
+
+      const url = URL.createObjectURL(mp4);
+      setVideoUrl(url);
+      setProgress(1);
+      setPhase("");
+      setStage("done");
+      setCelebrate(true);
+      setLog(outputHandle ? "✓ तैयार है और सेव हो गया!" : "✓ तैयार है!");
+      retryRef.current = 0;
+      if (!outputHandle) setTimeout(() => autoDownload(url), 400);
+      setTimeout(() => setCelebrate(false), 3500);
+    } catch (error) {
+      console.error("[Raja AI] Rendering finalization failed", error);
+      if (renderIdRef.current !== myId) return;
+      setStage("ready");
+      setPhase("");
+      setProgress(0);
+      setLog(`Finalization error: ${getRenderErrorMessage(error)}`);
     }
-
-    // canvas + audio → MediaRecorder
-    const canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext("2d")!;
-
-    const audioEl = new Audio(URL.createObjectURL(audioFile));
-    audioEl.crossOrigin = "anonymous";
-    await new Promise((r) => (audioEl.oncanplaythrough = r));
-
-    const ac = new AudioContext();
-    const src = ac.createMediaElementSource(audioEl);
-    const dest = ac.createMediaStreamDestination();
-    src.connect(dest);
-    src.connect(ac.destination);
-
-    const stream = canvas.captureStream(FPS);
-    dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
-
-    const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-      ? "video/webm;codecs=vp9,opus"
-      : "video/webm;codecs=vp8,opus";
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
-    const chunks: Blob[] = [];
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: "video/webm" }))));
-
-    rec.start(250);
-    await ac.resume();
-    audioEl.currentTime = 0;
-    await audioEl.play();
-
-    let stop = false;
-    audioEl.onended = () => (stop = true);
-
-    const render = () => {
-      if (stop || renderIdRef.current !== myId) return;
-      const t = audioEl.currentTime;
-      // find current beat segment
-      let i = 0;
-      while (i < beats.times.length - 1 && beats.times[i + 1] <= t) i++;
-      const segStart = beats.times[i] ?? 0;
-      const segEnd = beats.times[i + 1] ?? beats.duration;
-      const segLen = Math.max(0.05, segEnd - segStart);
-      const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
-      const punch = Math.max(0, 1 - local * 4); // strong at beat, decays
-      const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
-      drawFrame(ctx, item.img, W, H, item.effect, local, punch);
-
-      setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
-      requestAnimationFrame(render);
-    };
-    requestAnimationFrame(render);
-
-    await new Promise<void>((r) => (audioEl.onended = () => r()));
-    if (renderIdRef.current !== myId) return;
-    await new Promise((r) => setTimeout(r, 200));
-    rec.stop();
-    const webm = await recDone;
-    ac.close();
-    if (renderIdRef.current !== myId) return;
-    setProgress(0.7);
-    setPhase("encode");
-
-    setLog("MP4 1080p में कन्वर्ट हो रहा है…");
-    const ff = await getFFmpeg();
-    ff.on("progress", ({ progress: p }: { progress: number }) => {
-      const pp = Math.max(0, Math.min(1, p));
-      setProgress(0.7 + pp * 0.3);
-    });
-    const { fetchFile } = await import("@ffmpeg/util");
-    await ff.writeFile("in.webm", await fetchFile(webm));
-    await ff.exec([
-      "-i", "in.webm",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-      "-pix_fmt", "yuv420p",
-      "-vf", `scale=${W}:${H}`,
-      "-c:a", "aac", "-b:a", "192k",
-      "-movflags", "+faststart",
-      "out.mp4",
-    ]);
-    if (renderIdRef.current !== myId) return;
-    const data = (await ff.readFile("out.mp4")) as Uint8Array;
-    // copy into a fresh ArrayBuffer to satisfy Blob typings
-    const buf = new Uint8Array(data.byteLength);
-    buf.set(data);
-    const mp4 = new Blob([buf], { type: "video/mp4" });
-    const url = URL.createObjectURL(mp4);
-    setVideoUrl(url);
-    setProgress(1);
-    setPhase("");
-    setStage("done");
-    setCelebrate(true);
-    setLog("✓ तैयार है!");
-    retryRef.current = 0;
-    // auto-download
-    setTimeout(() => {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "raja-ai-video.mp4";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }, 400);
-    setTimeout(() => setCelebrate(false), 3500);
   }
 
   const canGenerate = !!beats && filledCount >= 1 && stage !== "rendering" && stage !== "analyzing";
