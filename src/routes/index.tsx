@@ -756,11 +756,13 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
 function PhotoSlot({
   file,
   index,
+  enabled,
   onPick,
   onClear,
 }: {
   file: File | null;
   index: number;
+  enabled: boolean;
   onPick: (f: File) => void;
   onClear: () => void;
 }) {
@@ -775,11 +777,13 @@ function PhotoSlot({
 
   if (file && url) {
     return (
-      <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/20">
+      <div className="group relative z-10 aspect-square overflow-hidden rounded-xl border border-white/20" style={{ pointerEvents: "auto" }}>
         <img src={url} alt="" className="h-full w-full object-cover" />
         <button
-          onClick={onClear}
-          className="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] opacity-0 transition group-hover:opacity-100"
+          type="button"
+          onClick={() => { console.log(`[Raja AI] STEP 2 ▶ Slot ${index + 1} cleared`); onClear(); }}
+          className="absolute right-1 top-1 z-20 rounded-full bg-black/70 px-2 py-0.5 text-[10px]"
+          style={{ pointerEvents: "auto" }}
         >
           ✕
         </button>
@@ -789,10 +793,17 @@ function PhotoSlot({
 
   return (
     <button
-      onClick={() => ref.current?.click()}
-      className="relative flex aspect-square items-center justify-center rounded-xl border-2 border-dashed border-[#ff2e88]/50 bg-[#ff2e88]/5 text-white/70 backdrop-blur transition hover:border-[#ff2e88] hover:bg-[#ff2e88]/15"
+      type="button"
+      disabled={!enabled}
+      onClick={() => {
+        console.log(`[Raja AI] STEP 2 ▶ Slot ${index + 1} clicked`, { enabled });
+        if (!enabled) return;
+        ref.current?.click();
+      }}
+      className="relative z-10 flex aspect-square items-center justify-center rounded-xl border-2 border-dashed border-[#ff2e88]/50 bg-[#ff2e88]/5 text-white/70 backdrop-blur transition hover:border-[#ff2e88] hover:bg-[#ff2e88]/15 disabled:cursor-not-allowed disabled:opacity-40"
+      style={{ pointerEvents: "auto" }}
     >
-      <span className="pointer-events-none absolute inset-0 animate-pulse rounded-xl bg-[#ff2e88]/10" />
+      {enabled && <span className="pointer-events-none absolute inset-0 animate-pulse rounded-xl bg-[#ff2e88]/10" />}
       <div className="relative z-10 flex flex-col items-center">
         <div className="text-2xl">+</div>
         <div className="mt-1 text-[10px] font-semibold tracking-wider">SLOT {index + 1}</div>
