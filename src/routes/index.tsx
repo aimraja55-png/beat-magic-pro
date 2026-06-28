@@ -562,13 +562,15 @@ function Editor() {
           </h1>
         </header>
 
-        {/* STEP 1: AUDIO */}
+        {/* STEP 1: AUDIO (top layer) */}
         {!audioFile && (
-          <BigAudioButton onPick={onAudio} loading={stage === "analyzing"} />
+          <div className="relative z-30" style={{ pointerEvents: "auto" }}>
+            <BigAudioButton onPick={onAudio} loading={stage === "analyzing"} />
+          </div>
         )}
 
         {audioFile && beats && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+          <div className="relative z-30 rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl" style={{ pointerEvents: "auto" }}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">🎵 {audioFile.name}</div>
@@ -576,13 +578,13 @@ function Editor() {
                   {beats.duration.toFixed(1)}s • {beats.bpm} BPM • {beats.times.length} beats
                 </div>
               </div>
-              <label className="shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
+              <label className="relative z-30 shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10" style={{ pointerEvents: "auto" }}>
                 बदलें
                 <input
                   type="file"
                   accept="audio/*"
                   className="hidden"
-                  onChange={(e) => e.target.files?.[0] && onAudio(e.target.files[0])}
+                  onChange={(e) => { console.log("[Raja AI] STEP 1 ▶ Replace-audio"); e.target.files?.[0] && onAudio(e.target.files[0]); }}
                 />
               </label>
             </div>
@@ -591,19 +593,19 @@ function Editor() {
 
         {/* STEP 2: PHOTO SLOTS */}
         {beats && stage !== "rendering" && stage !== "done" && (
-          <div className="mt-6">
+          <div className="relative z-20 mt-6" style={{ pointerEvents: "auto" }}>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-wider text-white/80">
-                📸 फोटो भरें — {filledCount}/{photosNeeded}
+                📸 Step 2 — फोटो भरें ({filledCount}/{photosNeeded})
               </h2>
-              <label className="cursor-pointer text-xs text-white/60 underline-offset-4 hover:text-white hover:underline">
+              <label className="relative z-20 cursor-pointer text-xs text-white/60 underline-offset-4 hover:text-white hover:underline" style={{ pointerEvents: "auto" }}>
                 सब एक साथ चुनें
                 <input
                   type="file"
                   accept="image/*"
                   multiple
                   className="hidden"
-                  onChange={(e) => fillSlotsBulk(e.target.files)}
+                  onChange={(e) => { console.log("[Raja AI] STEP 2 ▶ Bulk:", e.target.files?.length ?? 0); fillSlotsBulk(e.target.files); }}
                 />
               </label>
             </div>
@@ -613,6 +615,7 @@ function Editor() {
                   key={i}
                   file={f}
                   index={i}
+                  enabled={audioReady}
                   onPick={(file) => setSlot(i, file)}
                   onClear={() => setSlot(i, null)}
                 />
@@ -623,37 +626,46 @@ function Editor() {
 
         {/* STEP 3: MODE */}
         {beats && filledCount >= 1 && stage !== "rendering" && stage !== "done" && (
-          <div className="mt-8">
+          <div className="relative z-20 mt-8" style={{ pointerEvents: "auto" }}>
             <h2 className="mb-3 text-sm font-semibold tracking-wider text-white/80">
-              🎬 मोड चुनें
+              🎬 Step 3 — मोड चुनें ({mode === "shorts" ? "Shorts" : "Long"})
             </h2>
             <div className="grid grid-cols-2 gap-3">
               <ModeCard
                 active={mode === "shorts"}
                 title="Shorts"
                 sub="15–60s • 9:16"
-                onClick={() => setMode("shorts")}
+                onClick={() => { console.log("[Raja AI] STEP 3 ▶ Mode: shorts"); setMode("shorts"); }}
               />
               <ModeCard
                 active={mode === "long"}
                 title="Long Video"
                 sub="1m+ • 16:9"
-                onClick={() => setMode("long")}
+                onClick={() => { console.log("[Raja AI] STEP 3 ▶ Mode: long"); setMode("long"); }}
               />
             </div>
           </div>
         )}
 
         {/* STEP 4: GO */}
-        {beats && filledCount >= 1 && stage !== "rendering" && stage !== "done" && (
-          <button
-            disabled={!canGenerate}
-            onClick={generate}
-            className="group relative mt-8 w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:opacity-40"
-          >
-            <span className="relative z-10">GO ▶</span>
-            <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
-          </button>
+        {beats && stage !== "rendering" && stage !== "done" && (
+          <div className="relative z-20 mt-8" style={{ pointerEvents: "auto" }}>
+            <button
+              type="button"
+              disabled={!canGenerate}
+              onClick={() => { console.log("[Raja AI] STEP 4 ▶ GO clicked", { canGenerate }); void generate(); }}
+              className="group relative z-20 block w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ pointerEvents: "auto" }}
+            >
+              <span className="relative z-10">{canGenerate ? "GO ▶" : "GO (पहले फोटो भरें)"}</span>
+              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
+            </button>
+            {!canGenerate && (
+              <p className="mt-2 text-center text-[11px] text-white/50">
+                {filledCount === 0 ? "कम से कम 1 फोटो स्लॉट भरें" : "तैयार होते ही एक्टिव होगा"}
+              </p>
+            )}
+          </div>
         )}
 
         {/* RENDERING OVERLAY */}
