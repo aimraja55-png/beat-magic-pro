@@ -832,14 +832,16 @@ function ModeCard({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`rounded-2xl border p-5 text-left backdrop-blur-xl transition ${
+      style={{ pointerEvents: "auto" }}
+      className={`relative z-10 rounded-2xl border p-5 text-left backdrop-blur-xl transition ${
         active
           ? "border-[#ff2e88] bg-[#ff2e88]/15 shadow-[0_10px_40px_-15px_rgba(255,46,136,0.6)]"
           : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
       }`}
     >
-      <div className="text-lg font-black">{title}</div>
+      <div className="text-lg font-black">{title}{active && <span className="ml-2 text-[#ff2e88]">●</span>}</div>
       <div className="mt-1 text-xs text-white/60">{sub}</div>
     </button>
   );
