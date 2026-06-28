@@ -1,5 +1,7 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { toBlobURL } from "@ffmpeg/util";
+
+const coreURL = "/ffmpeg/ffmpeg-core.js";
+const wasmURL = "/__l5e/assets-v1/01814cad-abc1-4bc3-aee0-a93e73fcb79d/ffmpeg-core.wasm";
 
 type EncodeRequest = {
   type: "encode";
@@ -56,10 +58,9 @@ async function loadFFmpeg() {
     post({ type: "progress", progress: safeProgress, message: "MP4 finalization" });
   });
 
-  const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
+    coreURL,
+    wasmURL,
   });
   loaded = true;
   return ffmpeg;
