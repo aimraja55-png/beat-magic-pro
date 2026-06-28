@@ -297,23 +297,27 @@ function Editor() {
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
 
   async function onAudio(f: File) {
+    console.log("[Raja AI] STEP 1 ▶ Audio selected:", f.name, f.type, f.size);
     setAudioFile(f);
     setStage("analyzing");
     setLog("ऑडियो स्कैन हो रहा है…");
     try {
       const b = await analyzeBeats(f);
+      console.log("[Raja AI] STEP 1 ✓ Beats ready — slots unlocked", b);
       setBeats(b);
       const need = Math.max(4, Math.ceil(b.times.length / 2));
       setSlots(new Array(need).fill(null));
       setStage("ready");
       setLog(`✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • ${b.times.length} beats detected`);
     } catch (e: any) {
+      console.error("[Raja AI] STEP 1 ✗ Audio decode failed:", e);
       setStage("idle");
       setLog("ऑडियो डिकोड नहीं हो सका: " + e.message);
     }
   }
 
   function setSlot(idx: number, file: File | null) {
+    console.log(`[Raja AI] STEP 2 ▶ Slot ${idx + 1} ${file ? "filled" : "cleared"}`, file?.name);
     setSlots((s) => {
       const next = [...s];
       next[idx] = file;
@@ -364,8 +368,12 @@ function Editor() {
   }, [stage, phase, progress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function generate() {
+    console.log("[Raja AI] STEP 4 ▶ GO clicked — triggering render engine");
     const photos = slots.filter(Boolean) as File[];
-    if (!audioFile || !beats || photos.length === 0) return;
+    if (!audioFile || !beats || photos.length === 0) {
+      console.warn("[Raja AI] STEP 4 ✗ blocked", { audio: !!audioFile, beats: !!beats, photos: photos.length });
+      return;
+    }
     const outputHandle = await requestOutputFileHandle();
     const myId = ++renderIdRef.current;
     lastProgressRef.current = { p: 0, t: performance.now() };
@@ -529,7 +537,9 @@ function Editor() {
     }
   }
 
-  const canGenerate = !!beats && filledCount >= 1 && stage !== "rendering" && stage !== "analyzing";
+  const audioReady = !!beats && stage !== "analyzing";
+  const photosReady = audioReady && filledCount >= 1;
+  const canGenerate = photosReady && stage !== "rendering";
 
   return (
     <div
@@ -539,7 +549,7 @@ function Editor() {
           "radial-gradient(1200px 800px at 20% -10%, #2a1457 0%, transparent 60%), radial-gradient(900px 700px at 110% 20%, #ff2e88 0%, transparent 55%), #0b0617",
       }}
     >
-      <div className="mx-auto max-w-2xl px-5 py-10">
+      <div className="relative z-10 mx-auto max-w-2xl px-5 py-10" style={{ pointerEvents: "auto" }}>
         <header className="mb-10 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[10px] tracking-[0.3em] uppercase backdrop-blur-xl">
             <span className="h-1.5 w-1.5 rounded-full bg-[#ff2e88]" /> 2026 Edition
