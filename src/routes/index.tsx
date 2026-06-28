@@ -697,9 +697,11 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
   return (
     <div className="flex flex-col items-center">
       <button
-        onClick={() => ref.current?.click()}
+        type="button"
+        onClick={() => { console.log("[Raja AI] STEP 1 ▶ Big audio button clicked"); ref.current?.click(); }}
         disabled={loading}
-        className="group relative flex h-64 w-64 items-center justify-center rounded-full bg-gradient-to-br from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] text-black shadow-[0_0_80px_-10px_rgba(255,46,136,0.8)] transition active:scale-95"
+        className="group relative z-30 flex h-64 w-64 items-center justify-center rounded-full bg-gradient-to-br from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] text-black shadow-[0_0_80px_-10px_rgba(255,46,136,0.8)] transition active:scale-95"
+        style={{ pointerEvents: "auto" }}
       >
         <span className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-br from-[#ff2e88] to-[#ffb347] opacity-60 blur-2xl" />
         <span className="pointer-events-none absolute inset-0 animate-ping rounded-full bg-[#ff2e88]/30" />
