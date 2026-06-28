@@ -284,13 +284,14 @@ function Editor() {
   const [phase, setPhase] = useState<"record" | "encode" | "">("");
   const [log, setLog] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [mode, setMode] = useState<"shorts" | "long">("shorts");
   const [celebrate, setCelebrate] = useState(false);
 
   const renderIdRef = useRef(0);
   const lastProgressRef = useRef({ p: 0, t: 0 });
   const retryRef = useRef(0);
-  const downloadRef = useRef<HTMLAnchorElement>(null);
 
   const photosNeeded = beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
   const filledCount = slots.filter(Boolean).length;
@@ -340,6 +341,34 @@ function Editor() {
     });
   }
 
+  useEffect(() => {
+    return () => {
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+    };
+  }, [videoUrl]);
+
+  async function exportPreviewVideo() {
+    console.log("[Raja AI] EXPORT ▶ SAVE / EXPORT clicked", { ready: !!videoBlob, hasUrl: !!videoUrl });
+    if (!videoBlob || !videoUrl) return;
+    setExporting(true);
+    try {
+      const outputHandle = await requestOutputFileHandle();
+      if (outputHandle) {
+        setLog("वीडियो फाइल save हो रही है…");
+        await saveWithFileHandle(outputHandle, videoBlob);
+        setLog("✓ वीडियो सेव हो गया!");
+      } else {
+        autoDownload(videoUrl);
+        setLog("✓ डाउनलोड शुरू हो गया!");
+      }
+    } catch (error) {
+      console.error("[Raja AI] EXPORT ✗ Save failed", error);
+      setLog(`Export error: ${getRenderErrorMessage(error)}`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // Watchdog: if progress stalls > 18s during rendering, force-restart
   useEffect(() => {
     if (stage !== "rendering") return;
@@ -374,13 +403,13 @@ function Editor() {
       console.warn("[Raja AI] STEP 4 ✗ blocked", { audio: !!audioFile, beats: !!beats, photos: photos.length });
       return;
     }
-    const outputHandle = await requestOutputFileHandle();
     const myId = ++renderIdRef.current;
     lastProgressRef.current = { p: 0, t: performance.now() };
     setStage("rendering");
     setProgress(0);
     setPhase("record");
     setVideoUrl(null);
+    setVideoBlob(null);
     setCelebrate(false);
     setLog("रेंडर शुरू…");
 
@@ -512,20 +541,15 @@ function Editor() {
       if (renderIdRef.current !== myId) return;
 
       const mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
-      if (outputHandle) {
-        setLog("वीडियो फाइल save हो रही है…");
-        await saveWithFileHandle(outputHandle, mp4);
-      }
-
       const url = URL.createObjectURL(mp4);
+      setVideoBlob(mp4);
       setVideoUrl(url);
       setProgress(1);
       setPhase("");
       setStage("done");
       setCelebrate(true);
-      setLog(outputHandle ? "✓ तैयार है और सेव हो गया!" : "✓ तैयार है!");
+      setLog("✓ Preview तैयार है — SAVE दबाने पर ही डाउनलोड होगा.");
       retryRef.current = 0;
-      if (!outputHandle) setTimeout(() => autoDownload(url), 400);
       setTimeout(() => setCelebrate(false), 3500);
     } catch (error) {
       console.error("[Raja AI] Rendering finalization failed", error);
@@ -679,23 +703,42 @@ function Editor() {
 
         {/* DONE */}
         {stage === "done" && videoUrl && (
-          <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl">
-            <video src={videoUrl} controls className="w-full rounded-xl" />
-            <a
-              ref={downloadRef}
-              href={videoUrl}
-              download="raja-ai-video.mp4"
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-bold text-black"
+          <div className="relative z-30 mt-2 rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl" style={{ pointerEvents: "auto" }}>
+            <div className="mb-4 text-center">
+              <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/50">Preview Ready</div>
+              <h2 className="mt-2 text-2xl font-black">Video Preview Player</h2>
+              <p className="mt-1 text-xs text-white/55">पहले वीडियो देखें, फिर नीचे SAVE / EXPORT दबाएँ.</p>
+            </div>
+            <video
+              src={videoUrl}
+              controls
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="auto"
+              className="relative z-30 w-full rounded-xl bg-black shadow-[0_24px_80px_-35px_rgba(255,46,136,0.75)]"
+              style={{ pointerEvents: "auto" }}
+            />
+            <button
+              type="button"
+              disabled={exporting || !videoBlob}
+              onClick={() => { console.log("[Raja AI] EXPORT ▶ Button click received"); void exportPreviewVideo(); }}
+              className="relative z-40 mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
+              style={{ pointerEvents: "auto" }}
             >
-              ⬇ Download MP4 (1080p)
-            </a>
+              {exporting ? "SAVING…" : "SAVE / EXPORT"}
+            </button>
             <button
               onClick={() => {
+                console.log("[Raja AI] RESET ▶ Create again clicked");
                 setStage("ready");
                 setVideoUrl(null);
+                setVideoBlob(null);
                 setProgress(0);
               }}
-              className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10"
+              className="relative z-40 mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10"
+              style={{ pointerEvents: "auto" }}
             >
               फिर से बनाएँ
             </button>
