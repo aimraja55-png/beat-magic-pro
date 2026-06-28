@@ -297,23 +297,27 @@ function Editor() {
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
 
   async function onAudio(f: File) {
+    console.log("[Raja AI] STEP 1 ▶ Audio selected:", f.name, f.type, f.size);
     setAudioFile(f);
     setStage("analyzing");
     setLog("ऑडियो स्कैन हो रहा है…");
     try {
       const b = await analyzeBeats(f);
+      console.log("[Raja AI] STEP 1 ✓ Beats ready — slots unlocked", b);
       setBeats(b);
       const need = Math.max(4, Math.ceil(b.times.length / 2));
       setSlots(new Array(need).fill(null));
       setStage("ready");
       setLog(`✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • ${b.times.length} beats detected`);
     } catch (e: any) {
+      console.error("[Raja AI] STEP 1 ✗ Audio decode failed:", e);
       setStage("idle");
       setLog("ऑडियो डिकोड नहीं हो सका: " + e.message);
     }
   }
 
   function setSlot(idx: number, file: File | null) {
+    console.log(`[Raja AI] STEP 2 ▶ Slot ${idx + 1} ${file ? "filled" : "cleared"}`, file?.name);
     setSlots((s) => {
       const next = [...s];
       next[idx] = file;
@@ -364,8 +368,12 @@ function Editor() {
   }, [stage, phase, progress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function generate() {
+    console.log("[Raja AI] STEP 4 ▶ GO clicked — triggering render engine");
     const photos = slots.filter(Boolean) as File[];
-    if (!audioFile || !beats || photos.length === 0) return;
+    if (!audioFile || !beats || photos.length === 0) {
+      console.warn("[Raja AI] STEP 4 ✗ blocked", { audio: !!audioFile, beats: !!beats, photos: photos.length });
+      return;
+    }
     const outputHandle = await requestOutputFileHandle();
     const myId = ++renderIdRef.current;
     lastProgressRef.current = { p: 0, t: performance.now() };
@@ -529,7 +537,9 @@ function Editor() {
     }
   }
 
-  const canGenerate = !!beats && filledCount >= 1 && stage !== "rendering" && stage !== "analyzing";
+  const audioReady = !!beats && stage !== "analyzing";
+  const photosReady = audioReady && filledCount >= 1;
+  const canGenerate = photosReady && stage !== "rendering";
 
   return (
     <div
@@ -539,7 +549,7 @@ function Editor() {
           "radial-gradient(1200px 800px at 20% -10%, #2a1457 0%, transparent 60%), radial-gradient(900px 700px at 110% 20%, #ff2e88 0%, transparent 55%), #0b0617",
       }}
     >
-      <div className="mx-auto max-w-2xl px-5 py-10">
+      <div className="relative z-10 mx-auto max-w-2xl px-5 py-10" style={{ pointerEvents: "auto" }}>
         <header className="mb-10 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[10px] tracking-[0.3em] uppercase backdrop-blur-xl">
             <span className="h-1.5 w-1.5 rounded-full bg-[#ff2e88]" /> 2026 Edition
@@ -552,13 +562,15 @@ function Editor() {
           </h1>
         </header>
 
-        {/* STEP 1: AUDIO */}
+        {/* STEP 1: AUDIO (top layer) */}
         {!audioFile && (
-          <BigAudioButton onPick={onAudio} loading={stage === "analyzing"} />
+          <div className="relative z-30" style={{ pointerEvents: "auto" }}>
+            <BigAudioButton onPick={onAudio} loading={stage === "analyzing"} />
+          </div>
         )}
 
         {audioFile && beats && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+          <div className="relative z-30 rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl" style={{ pointerEvents: "auto" }}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">🎵 {audioFile.name}</div>
@@ -566,13 +578,13 @@ function Editor() {
                   {beats.duration.toFixed(1)}s • {beats.bpm} BPM • {beats.times.length} beats
                 </div>
               </div>
-              <label className="shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
+              <label className="relative z-30 shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10" style={{ pointerEvents: "auto" }}>
                 बदलें
                 <input
                   type="file"
                   accept="audio/*"
                   className="hidden"
-                  onChange={(e) => e.target.files?.[0] && onAudio(e.target.files[0])}
+                  onChange={(e) => { console.log("[Raja AI] STEP 1 ▶ Replace-audio"); e.target.files?.[0] && onAudio(e.target.files[0]); }}
                 />
               </label>
             </div>
@@ -581,19 +593,19 @@ function Editor() {
 
         {/* STEP 2: PHOTO SLOTS */}
         {beats && stage !== "rendering" && stage !== "done" && (
-          <div className="mt-6">
+          <div className="relative z-20 mt-6" style={{ pointerEvents: "auto" }}>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-wider text-white/80">
-                📸 फोटो भरें — {filledCount}/{photosNeeded}
+                📸 Step 2 — फोटो भरें ({filledCount}/{photosNeeded})
               </h2>
-              <label className="cursor-pointer text-xs text-white/60 underline-offset-4 hover:text-white hover:underline">
+              <label className="relative z-20 cursor-pointer text-xs text-white/60 underline-offset-4 hover:text-white hover:underline" style={{ pointerEvents: "auto" }}>
                 सब एक साथ चुनें
                 <input
                   type="file"
                   accept="image/*"
                   multiple
                   className="hidden"
-                  onChange={(e) => fillSlotsBulk(e.target.files)}
+                  onChange={(e) => { console.log("[Raja AI] STEP 2 ▶ Bulk:", e.target.files?.length ?? 0); fillSlotsBulk(e.target.files); }}
                 />
               </label>
             </div>
@@ -603,6 +615,7 @@ function Editor() {
                   key={i}
                   file={f}
                   index={i}
+                  enabled={audioReady}
                   onPick={(file) => setSlot(i, file)}
                   onClear={() => setSlot(i, null)}
                 />
@@ -613,37 +626,46 @@ function Editor() {
 
         {/* STEP 3: MODE */}
         {beats && filledCount >= 1 && stage !== "rendering" && stage !== "done" && (
-          <div className="mt-8">
+          <div className="relative z-20 mt-8" style={{ pointerEvents: "auto" }}>
             <h2 className="mb-3 text-sm font-semibold tracking-wider text-white/80">
-              🎬 मोड चुनें
+              🎬 Step 3 — मोड चुनें ({mode === "shorts" ? "Shorts" : "Long"})
             </h2>
             <div className="grid grid-cols-2 gap-3">
               <ModeCard
                 active={mode === "shorts"}
                 title="Shorts"
                 sub="15–60s • 9:16"
-                onClick={() => setMode("shorts")}
+                onClick={() => { console.log("[Raja AI] STEP 3 ▶ Mode: shorts"); setMode("shorts"); }}
               />
               <ModeCard
                 active={mode === "long"}
                 title="Long Video"
                 sub="1m+ • 16:9"
-                onClick={() => setMode("long")}
+                onClick={() => { console.log("[Raja AI] STEP 3 ▶ Mode: long"); setMode("long"); }}
               />
             </div>
           </div>
         )}
 
         {/* STEP 4: GO */}
-        {beats && filledCount >= 1 && stage !== "rendering" && stage !== "done" && (
-          <button
-            disabled={!canGenerate}
-            onClick={generate}
-            className="group relative mt-8 w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:opacity-40"
-          >
-            <span className="relative z-10">GO ▶</span>
-            <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
-          </button>
+        {beats && stage !== "rendering" && stage !== "done" && (
+          <div className="relative z-20 mt-8" style={{ pointerEvents: "auto" }}>
+            <button
+              type="button"
+              disabled={!canGenerate}
+              onClick={() => { console.log("[Raja AI] STEP 4 ▶ GO clicked", { canGenerate }); void generate(); }}
+              className="group relative z-20 block w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ pointerEvents: "auto" }}
+            >
+              <span className="relative z-10">{canGenerate ? "GO ▶" : "GO (पहले फोटो भरें)"}</span>
+              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
+            </button>
+            {!canGenerate && (
+              <p className="mt-2 text-center text-[11px] text-white/50">
+                {filledCount === 0 ? "कम से कम 1 फोटो स्लॉट भरें" : "तैयार होते ही एक्टिव होगा"}
+              </p>
+            )}
+          </div>
         )}
 
         {/* RENDERING OVERLAY */}
@@ -697,9 +719,11 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
   return (
     <div className="flex flex-col items-center">
       <button
-        onClick={() => ref.current?.click()}
+        type="button"
+        onClick={() => { console.log("[Raja AI] STEP 1 ▶ Big audio button clicked"); ref.current?.click(); }}
         disabled={loading}
-        className="group relative flex h-64 w-64 items-center justify-center rounded-full bg-gradient-to-br from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] text-black shadow-[0_0_80px_-10px_rgba(255,46,136,0.8)] transition active:scale-95"
+        className="group relative z-30 flex h-64 w-64 items-center justify-center rounded-full bg-gradient-to-br from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] text-black shadow-[0_0_80px_-10px_rgba(255,46,136,0.8)] transition active:scale-95"
+        style={{ pointerEvents: "auto" }}
       >
         <span className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-br from-[#ff2e88] to-[#ffb347] opacity-60 blur-2xl" />
         <span className="pointer-events-none absolute inset-0 animate-ping rounded-full bg-[#ff2e88]/30" />
@@ -732,11 +756,13 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
 function PhotoSlot({
   file,
   index,
+  enabled,
   onPick,
   onClear,
 }: {
   file: File | null;
   index: number;
+  enabled: boolean;
   onPick: (f: File) => void;
   onClear: () => void;
 }) {
@@ -751,11 +777,13 @@ function PhotoSlot({
 
   if (file && url) {
     return (
-      <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/20">
+      <div className="group relative z-10 aspect-square overflow-hidden rounded-xl border border-white/20" style={{ pointerEvents: "auto" }}>
         <img src={url} alt="" className="h-full w-full object-cover" />
         <button
-          onClick={onClear}
-          className="absolute right-1 top-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] opacity-0 transition group-hover:opacity-100"
+          type="button"
+          onClick={() => { console.log(`[Raja AI] STEP 2 ▶ Slot ${index + 1} cleared`); onClear(); }}
+          className="absolute right-1 top-1 z-20 rounded-full bg-black/70 px-2 py-0.5 text-[10px]"
+          style={{ pointerEvents: "auto" }}
         >
           ✕
         </button>
@@ -765,10 +793,17 @@ function PhotoSlot({
 
   return (
     <button
-      onClick={() => ref.current?.click()}
-      className="relative flex aspect-square items-center justify-center rounded-xl border-2 border-dashed border-[#ff2e88]/50 bg-[#ff2e88]/5 text-white/70 backdrop-blur transition hover:border-[#ff2e88] hover:bg-[#ff2e88]/15"
+      type="button"
+      disabled={!enabled}
+      onClick={() => {
+        console.log(`[Raja AI] STEP 2 ▶ Slot ${index + 1} clicked`, { enabled });
+        if (!enabled) return;
+        ref.current?.click();
+      }}
+      className="relative z-10 flex aspect-square items-center justify-center rounded-xl border-2 border-dashed border-[#ff2e88]/50 bg-[#ff2e88]/5 text-white/70 backdrop-blur transition hover:border-[#ff2e88] hover:bg-[#ff2e88]/15 disabled:cursor-not-allowed disabled:opacity-40"
+      style={{ pointerEvents: "auto" }}
     >
-      <span className="pointer-events-none absolute inset-0 animate-pulse rounded-xl bg-[#ff2e88]/10" />
+      {enabled && <span className="pointer-events-none absolute inset-0 animate-pulse rounded-xl bg-[#ff2e88]/10" />}
       <div className="relative z-10 flex flex-col items-center">
         <div className="text-2xl">+</div>
         <div className="mt-1 text-[10px] font-semibold tracking-wider">SLOT {index + 1}</div>
@@ -797,14 +832,16 @@ function ModeCard({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`rounded-2xl border p-5 text-left backdrop-blur-xl transition ${
+      style={{ pointerEvents: "auto" }}
+      className={`relative z-10 rounded-2xl border p-5 text-left backdrop-blur-xl transition ${
         active
           ? "border-[#ff2e88] bg-[#ff2e88]/15 shadow-[0_10px_40px_-15px_rgba(255,46,136,0.6)]"
           : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
       }`}
     >
-      <div className="text-lg font-black">{title}</div>
+      <div className="text-lg font-black">{title}{active && <span className="ml-2 text-[#ff2e88]">●</span>}</div>
       <div className="mt-1 text-xs text-white/60">{sub}</div>
     </button>
   );
