@@ -1,7 +1,8 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { toBlobURL } from "@ffmpeg/util";
 
-const coreURL = "/ffmpeg/ffmpeg-core.js";
-const wasmURL = "/__l5e/assets-v1/01814cad-abc1-4bc3-aee0-a93e73fcb79d/ffmpeg-core.wasm";
+const staticCoreURL = "/ffmpeg/ffmpeg-core.js";
+const staticWasmURL = "/__l5e/assets-v1/01814cad-abc1-4bc3-aee0-a93e73fcb79d/ffmpeg-core.wasm";
 
 type EncodeRequest = {
   type: "encode";
@@ -28,6 +29,7 @@ const workerScope = self as unknown as EncodeWorkerScope;
 let ffmpeg: FFmpeg | null = null;
 let loaded = false;
 const recentLogs: string[] = [];
+const activeBlobUrls: string[] = [];
 
 function post(message: WorkerResponse, transfer?: Transferable[]) {
   workerScope.postMessage(message, transfer ?? []);
@@ -56,6 +58,13 @@ async function verifyEncoderAsset(url: string, label: string) {
   rememberLog(`${label} ready (${response.headers.get("content-type") || "unknown content-type"})`);
 }
 
+function cleanupEncoderBlobUrls() {
+  while (activeBlobUrls.length) {
+    const url = activeBlobUrls.pop();
+    if (url) URL.revokeObjectURL(url);
+  }
+}
+
 async function loadFFmpeg() {
   if (ffmpeg && loaded) return ffmpeg;
 
@@ -68,9 +77,16 @@ async function loadFFmpeg() {
   });
 
   post({ type: "progress", progress: 0.01, message: "Checking FFmpeg engine" });
-  await verifyEncoderAsset(coreURL, "ffmpeg-core.js");
-  await verifyEncoderAsset(wasmURL, "ffmpeg-core.wasm");
-  post({ type: "progress", progress: 0.03, message: "Loading FFmpeg engine" });
+  await verifyEncoderAsset(staticCoreURL, "ffmpeg-core.js");
+  await verifyEncoderAsset(staticWasmURL, "ffmpeg-core.wasm");
+  post({ type: "progress", progress: 0.03, message: "Preparing isolated FFmpeg modules" });
+
+  cleanupEncoderBlobUrls();
+  const coreURL = await toBlobURL(staticCoreURL, "text/javascript");
+  const wasmURL = await toBlobURL(staticWasmURL, "application/wasm");
+  activeBlobUrls.push(coreURL, wasmURL);
+  rememberLog("FFmpeg module URLs converted to browser-safe blobs");
+  post({ type: "progress", progress: 0.04, message: "Loading FFmpeg engine" });
 
   await ffmpeg.load({
     coreURL,
