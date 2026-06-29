@@ -1,6 +1,6 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 
-const coreURL = "/__l5e/assets-v1/1f51b325-57e9-4976-bb72-2c635e0fe954/ffmpeg-core.js";
+const coreURL = "/ffmpeg/ffmpeg-core.js";
 const wasmURL = "/__l5e/assets-v1/01814cad-abc1-4bc3-aee0-a93e73fcb79d/ffmpeg-core.wasm";
 
 type EncodeRequest = {
