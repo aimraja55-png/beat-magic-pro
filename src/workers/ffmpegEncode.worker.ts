@@ -1,8 +1,7 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { toBlobURL } from "@ffmpeg/util";
 
-const staticCoreURL = "/ffmpeg/ffmpeg-core.js";
-const staticWasmURL = "/__l5e/assets-v1/01814cad-abc1-4bc3-aee0-a93e73fcb79d/ffmpeg-core.wasm";
+const coreURL = "/__l5e/assets-v1/1f51b325-57e9-4976-bb72-2c635e0fe954/ffmpeg-core.js";
+const wasmURL = "/__l5e/assets-v1/01814cad-abc1-4bc3-aee0-a93e73fcb79d/ffmpeg-core.wasm";
 
 type EncodeRequest = {
   type: "encode";
@@ -29,7 +28,6 @@ const workerScope = self as unknown as EncodeWorkerScope;
 let ffmpeg: FFmpeg | null = null;
 let loaded = false;
 const recentLogs: string[] = [];
-const activeBlobUrls: string[] = [];
 
 function post(message: WorkerResponse, transfer?: Transferable[]) {
   workerScope.postMessage(message, transfer ?? []);
@@ -49,22 +47,6 @@ function classifyError(error: unknown): ErrorCategory {
   return "unknown";
 }
 
-async function verifyEncoderAsset(url: string, label: string) {
-  rememberLog(`Checking ${label}: ${url}`);
-  const response = await fetch(url, { method: "HEAD", cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`${label} missing or blocked: HTTP ${response.status} at ${url}`);
-  }
-  rememberLog(`${label} ready (${response.headers.get("content-type") || "unknown content-type"})`);
-}
-
-function cleanupEncoderBlobUrls() {
-  while (activeBlobUrls.length) {
-    const url = activeBlobUrls.pop();
-    if (url) URL.revokeObjectURL(url);
-  }
-}
-
 async function loadFFmpeg() {
   if (ffmpeg && loaded) return ffmpeg;
 
@@ -76,23 +58,10 @@ async function loadFFmpeg() {
     post({ type: "progress", progress: safeProgress, message: "MP4 finalization" });
   });
 
-  post({ type: "progress", progress: 0.01, message: "Checking FFmpeg engine" });
-  await verifyEncoderAsset(staticCoreURL, "ffmpeg-core.js");
-  await verifyEncoderAsset(staticWasmURL, "ffmpeg-core.wasm");
-  post({ type: "progress", progress: 0.03, message: "Preparing isolated FFmpeg modules" });
-
-  cleanupEncoderBlobUrls();
-  const coreURL = await toBlobURL(staticCoreURL, "text/javascript");
-  const wasmURL = await toBlobURL(staticWasmURL, "application/wasm");
-  activeBlobUrls.push(coreURL, wasmURL);
-  rememberLog("FFmpeg module URLs converted to browser-safe blobs");
-  post({ type: "progress", progress: 0.04, message: "Loading FFmpeg engine" });
-
   await ffmpeg.load({
     coreURL,
     wasmURL,
   });
-  rememberLog("FFmpeg engine loaded successfully");
   loaded = true;
   return ffmpeg;
 }
@@ -153,7 +122,6 @@ async function encode({ webmBuffer, width, height, fps, duration }: EncodeReques
   const outputBuffer = outputBytes.buffer as ArrayBuffer;
   await Promise.allSettled([ff.deleteFile(inputName), ff.deleteFile(outputName)]);
   ff.terminate();
-  cleanupEncoderBlobUrls();
   ffmpeg = null;
   loaded = false;
   post({ type: "progress", progress: 1, message: "MP4 ready" });
@@ -173,7 +141,6 @@ workerScope.onmessage = async ({ data }: MessageEvent<EncodeRequest>) => {
     }
     ffmpeg = null;
     loaded = false;
-    cleanupEncoderBlobUrls();
     const message = error instanceof Error ? error.message : String(error);
     post({ type: "error", message, category: classifyError(error), logs: recentLogs.slice(-12) });
   }
