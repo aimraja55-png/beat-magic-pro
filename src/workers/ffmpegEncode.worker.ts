@@ -47,6 +47,15 @@ function classifyError(error: unknown): ErrorCategory {
   return "unknown";
 }
 
+async function verifyEncoderAsset(url: string, label: string) {
+  rememberLog(`Checking ${label}: ${url}`);
+  const response = await fetch(url, { method: "HEAD", cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${label} missing or blocked: HTTP ${response.status} at ${url}`);
+  }
+  rememberLog(`${label} ready (${response.headers.get("content-type") || "unknown content-type"})`);
+}
+
 async function loadFFmpeg() {
   if (ffmpeg && loaded) return ffmpeg;
 
@@ -58,10 +67,16 @@ async function loadFFmpeg() {
     post({ type: "progress", progress: safeProgress, message: "MP4 finalization" });
   });
 
+  post({ type: "progress", progress: 0.01, message: "Checking FFmpeg engine" });
+  await verifyEncoderAsset(coreURL, "ffmpeg-core.js");
+  await verifyEncoderAsset(wasmURL, "ffmpeg-core.wasm");
+  post({ type: "progress", progress: 0.03, message: "Loading FFmpeg engine" });
+
   await ffmpeg.load({
     coreURL,
     wasmURL,
   });
+  rememberLog("FFmpeg engine loaded successfully");
   loaded = true;
   return ffmpeg;
 }
