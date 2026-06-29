@@ -153,6 +153,7 @@ async function encode({ webmBuffer, width, height, fps, duration }: EncodeReques
   const outputBuffer = outputBytes.buffer as ArrayBuffer;
   await Promise.allSettled([ff.deleteFile(inputName), ff.deleteFile(outputName)]);
   ff.terminate();
+  cleanupEncoderBlobUrls();
   ffmpeg = null;
   loaded = false;
   post({ type: "progress", progress: 1, message: "MP4 ready" });
@@ -172,6 +173,7 @@ workerScope.onmessage = async ({ data }: MessageEvent<EncodeRequest>) => {
     }
     ffmpeg = null;
     loaded = false;
+    cleanupEncoderBlobUrls();
     const message = error instanceof Error ? error.message : String(error);
     post({ type: "error", message, category: classifyError(error), logs: recentLogs.slice(-12) });
   }
