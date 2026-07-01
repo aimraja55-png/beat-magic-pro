@@ -133,6 +133,19 @@ function waitForNextPaint() {
   return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+function getBestRecorderMime() {
+  const candidates = [
+    'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+    "video/mp4;codecs=avc1,mp4a.40.2",
+    "video/mp4;codecs=avc1",
+    "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "";
+}
+
 function getRenderErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   const text = raw.toLowerCase();
@@ -466,13 +479,17 @@ function Editor() {
       const stream = canvas.captureStream(FPS);
       dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
 
-      const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-        ? "video/webm;codecs=vp9,opus"
-        : "video/webm;codecs=vp8,opus";
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+      const mime = getBestRecorderMime();
+      const recordsMp4Directly = mime.startsWith("video/mp4");
+      console.log("[Raja AI] Recorder selected", { mime, recordsMp4Directly });
+      const rec = new MediaRecorder(stream, {
+        ...(mime ? { mimeType: mime } : {}),
+        videoBitsPerSecond: recordsMp4Directly ? 6_500_000 : 7_500_000,
+        audioBitsPerSecond: 192_000,
+      });
       const chunks: Blob[] = [];
       rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: "video/webm" }))));
+      const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: recordsMp4Directly ? "video/mp4" : "video/webm" }))));
 
       rec.start(250);
       await ac.resume();
@@ -524,26 +541,34 @@ function Editor() {
       URL.revokeObjectURL(audioUrl);
       imageUrls.forEach((url) => URL.revokeObjectURL(url));
       if (renderIdRef.current !== myId) return;
-      setProgress(0.7);
-      setPhase("encode");
-
-      setLog("AI editing complete — अब 1080p MP4 file बन रही है…");
-      const webmBuffer = await webm.arrayBuffer();
-      const mp4Buffer = await encodeWebmInWorker({
-        webmBuffer,
-        width: W,
-        height: H,
-        fps: FPS,
-        duration: beats.duration,
-        onProgress: (p, message) => {
-          const pp = Math.max(0, Math.min(1, p));
-          setProgress(0.7 + pp * 0.3);
-          if (message) setLog(`${message}…`);
-        },
-      });
+      let mp4: Blob;
+      if (recordsMp4Directly) {
+        setProgress(0.96);
+        setPhase("encode");
+        setLog("AI editing complete — MP4 buffer flush हो रहा है…");
+        await waitForNextPaint();
+        mp4 = webm;
+      } else {
+        setProgress(0.7);
+        setPhase("encode");
+        setLog("AI editing complete — अब 1080p MP4 file बन रही है…");
+        const webmBuffer = await webm.arrayBuffer();
+        const mp4Buffer = await encodeWebmInWorker({
+          webmBuffer,
+          width: W,
+          height: H,
+          fps: FPS,
+          duration: beats.duration,
+          onProgress: (p, message) => {
+            const pp = Math.max(0, Math.min(1, p));
+            setProgress(0.7 + pp * 0.3);
+            if (message) setLog(`${message}…`);
+          },
+        });
+        mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+      }
       if (renderIdRef.current !== myId) return;
 
-      const mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
       if (mp4.size === 0) throw new Error("Format mismatch: generated MP4 buffer is empty");
       const url = URL.createObjectURL(mp4);
       setProgress(1);
