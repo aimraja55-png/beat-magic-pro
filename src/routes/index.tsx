@@ -794,8 +794,13 @@ function Editor() {
 
 function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loading: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
+  const lastFileTokenRef = useRef("");
   const handleFile = (file?: File) => {
-    if (file) onPick(file);
+    if (!file) return;
+    const token = `${file.name}-${file.size}-${file.lastModified}`;
+    if (lastFileTokenRef.current === token) return;
+    lastFileTokenRef.current = token;
+    onPick(file);
   };
   return (
     <div className="flex flex-col items-center">
