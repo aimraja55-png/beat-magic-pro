@@ -105,12 +105,15 @@ async function encode({ webmBuffer, width, height, fps, duration }: EncodeReques
   await ff.writeFile(inputName, new Uint8Array(webmBuffer));
   post({ type: "progress", progress: 0.3, message: "Starting encoder" });
 
-  const timeoutMs = Math.max(120_000, Math.ceil(duration * 12_000));
   const exitCode = await ff.exec(
     [
       "-hide_banner",
       "-fflags",
       "+genpts",
+      "-analyzeduration",
+      "100M",
+      "-probesize",
+      "100M",
       "-i",
       inputName,
       "-r",
@@ -122,21 +125,36 @@ async function encode({ webmBuffer, width, height, fps, duration }: EncodeReques
       "-preset",
       "ultrafast",
       "-crf",
-      "23",
+      "28",
+      "-maxrate",
+      "6500k",
+      "-bufsize",
+      "13000k",
       "-pix_fmt",
       "yuv420p",
+      "-profile:v",
+      "baseline",
+      "-level",
+      "4.2",
+      "-g",
+      String(fps * 2),
+      "-max_muxing_queue_size",
+      "9999",
       "-c:a",
       "aac",
       "-b:a",
       "192k",
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
       "-shortest",
-      "-movflags",
-      "+faststart",
+      "-avoid_negative_ts",
+      "make_zero",
       "-flush_packets",
       "1",
       outputName,
     ],
-    timeoutMs,
   );
 
   if (exitCode !== 0) throw new Error(`FFmpeg finalization failed with exit code ${exitCode}`);
