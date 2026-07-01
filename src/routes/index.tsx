@@ -794,6 +794,9 @@ function Editor() {
 
 function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loading: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
+  const handleFile = (file?: File) => {
+    if (file) onPick(file);
+  };
   return (
     <div className="flex flex-col items-center">
       <button
@@ -821,7 +824,8 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
           type="file"
           accept="audio/*"
           className="hidden"
-          onChange={(e) => e.target.files?.[0] && onPick(e.target.files[0])}
+          onInput={(e) => handleFile(e.currentTarget.files?.[0])}
+          onChange={(e) => handleFile(e.currentTarget.files?.[0])}
         />
       </button>
       <p className="mt-6 text-center text-sm text-white/60">
