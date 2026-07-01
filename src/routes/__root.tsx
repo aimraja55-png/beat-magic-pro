@@ -77,14 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Beat Magic" },
+      { name: "description", content: "Create professional AI-powered beat-synced videos in seconds. Perfect sync, no manual editing required!\"" },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Beat Magic" },
+      { property: "og:description", content: "Create professional AI-powered beat-synced videos in seconds. Perfect sync, no manual editing required!\"" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Beat Magic" },
+      { name: "twitter:description", content: "Create professional AI-powered beat-synced videos in seconds. Perfect sync, no manual editing required!\"" },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4d2df266-432d-4d1f-92f4-864a9885a8ed/id-preview-f9505202--d03cf504-5bf2-41b2-ad45-69f5318585f1.lovable.app-1782888179582.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4d2df266-432d-4d1f-92f4-864a9885a8ed/id-preview-f9505202--d03cf504-5bf2-41b2-ad45-69f5318585f1.lovable.app-1782888179582.png" },
     ],
     links: [
       {
