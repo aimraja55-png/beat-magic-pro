@@ -129,6 +129,10 @@ function autoDownload(url: string) {
   a.remove();
 }
 
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 function getRenderErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   const text = raw.toLowerCase();
@@ -458,7 +462,6 @@ function Editor() {
       const src = ac.createMediaElementSource(audioEl);
       const dest = ac.createMediaStreamDestination();
       src.connect(dest);
-      src.connect(ac.destination);
 
       const stream = canvas.captureStream(FPS);
       dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
@@ -524,7 +527,7 @@ function Editor() {
       setProgress(0.7);
       setPhase("encode");
 
-      setLog("MP4 1080p finalization worker में चल रहा है…");
+      setLog("AI editing complete — अब 1080p MP4 file बन रही है…");
       const webmBuffer = await webm.arrayBuffer();
       const mp4Buffer = await encodeWebmInWorker({
         webmBuffer,
@@ -541,11 +544,18 @@ function Editor() {
       if (renderIdRef.current !== myId) return;
 
       const mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+      if (mp4.size === 0) throw new Error("Format mismatch: generated MP4 buffer is empty");
       const url = URL.createObjectURL(mp4);
-      setVideoBlob(mp4);
-      setVideoUrl(url);
       setProgress(1);
       setPhase("");
+      setLog("✓ 100% video generated — preview तैयार हो रहा है…");
+      await waitForNextPaint();
+      if (renderIdRef.current !== myId) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      setVideoBlob(mp4);
+      setVideoUrl(url);
       setStage("done");
       setCelebrate(true);
       setLog("✓ Preview तैयार है — SAVE दबाने पर ही डाउनलोड होगा.");
