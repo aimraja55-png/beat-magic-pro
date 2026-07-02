@@ -18,7 +18,16 @@ function Index() {
 }
 
 /* ---------------- types ---------------- */
-type Beats = { times: number[]; bpm: number; duration: number };
+type Beats = {
+  times: number[];      // all onset times (fallback + display)
+  kicks: number[];      // low-band (bass/kick) peaks — used for photo cuts
+  snares: number[];     // high-band snare/hi-hat peaks — used for flashes
+  kickEnv: Float32Array; // normalized 0..1 low-band envelope (per hop)
+  snareEnv: Float32Array;// normalized 0..1 high-band envelope (per hop)
+  hop: number;           // seconds per envelope sample
+  bpm: number;
+  duration: number;
+};
 type Stage = "idle" | "analyzing" | "ready" | "rendering" | "done";
 type SavePickerHandle = {
   queryPermission?: (descriptor: { mode: "readwrite" }) => Promise<PermissionState>;
@@ -42,43 +51,129 @@ type EncodeWorkerMessage =
   | { type: "done"; buffer: ArrayBuffer }
   | { type: "error"; message: string; category: "memory" | "format" | "timeout" | "unknown"; logs: string[] };
 
-/* ---------------- Beat detection (Web Audio, energy-based onset) ---------------- */
-async function analyzeBeats(file: File): Promise<Beats> {
-  const arr = await file.arrayBuffer();
-  const Ctx = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
-  // decode using a temp AudioContext first (broader format support)
-  const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-  const audio = await ac.decodeAudioData(arr.slice(0));
-  ac.close();
-  const data = audio.getChannelData(0);
-  const sr = audio.sampleRate;
-  const hop = Math.floor(sr * 0.02); // 20ms hop
+/* ---------------- Beat detection (band-separated peak picker) ----------------
+   Runs the decoded audio through 3 offline biquad chains:
+     • Low  (<120 Hz)     → kick / bass hits — millisecond-locked photo cuts
+     • High (~3–6 kHz)    → snare / hi-hat   → real-time flash
+     • Full band          → generic onsets   (fallback / display BPM)
+   Envelopes are normalized to 0..1 so the render loop can read them as
+   "punch intensity" per frame — visuals are literally controlled by the wave.
+*/
+async function renderBand(
+  audio: AudioBuffer,
+  type: BiquadFilterType,
+  frequency: number,
+  Q: number,
+): Promise<Float32Array> {
+  const OfflineCtx =
+    window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
+  const offline = new OfflineCtx(1, audio.length, audio.sampleRate);
+  const src = offline.createBufferSource();
+  src.buffer = audio;
+  const filter = offline.createBiquadFilter();
+  filter.type = type;
+  filter.frequency.value = frequency;
+  filter.Q.value = Q;
+  src.connect(filter).connect(offline.destination);
+  src.start(0);
+  const rendered = await offline.startRendering();
+  // downmix to mono
+  const ch0 = rendered.getChannelData(0);
+  if (rendered.numberOfChannels === 1) return ch0.slice();
+  const ch1 = rendered.getChannelData(1);
+  const out = new Float32Array(ch0.length);
+  for (let i = 0; i < ch0.length; i++) out[i] = (ch0[i] + ch1[i]) * 0.5;
+  return out;
+}
+
+function envelopeOf(samples: Float32Array, sr: number, hopSec: number): Float32Array {
+  const hop = Math.max(1, Math.floor(sr * hopSec));
   const win = hop * 2;
-  const env: number[] = [];
-  for (let i = 0; i + win < data.length; i += hop) {
+  const frames = Math.max(0, Math.floor((samples.length - win) / hop));
+  const env = new Float32Array(frames);
+  let max = 1e-6;
+  for (let f = 0; f < frames; f++) {
+    const start = f * hop;
     let s = 0;
-    for (let j = 0; j < win; j++) s += data[i + j] * data[i + j];
-    env.push(Math.sqrt(s / win));
+    for (let j = 0; j < win; j++) {
+      const v = samples[start + j];
+      s += v * v;
+    }
+    const r = Math.sqrt(s / win);
+    env[f] = r;
+    if (r > max) max = r;
   }
-  // adaptive threshold peak picking
-  const beats: number[] = [];
-  const W = 20; // ~0.4s window
-  for (let i = W; i < env.length - W; i++) {
+  // normalize 0..1
+  for (let f = 0; f < frames; f++) env[f] = env[f] / max;
+  return env;
+}
+
+function pickPeaks(
+  env: Float32Array,
+  hopSec: number,
+  {
+    windowFrames,
+    ratio,
+    minGapSec,
+    floor,
+  }: { windowFrames: number; ratio: number; minGapSec: number; floor: number },
+): number[] {
+  const peaks: number[] = [];
+  const minGapFrames = Math.max(1, Math.floor(minGapSec / hopSec));
+  let lastPeak = -Infinity;
+  for (let i = windowFrames; i < env.length - windowFrames; i++) {
     let mean = 0;
-    for (let k = i - W; k <= i + W; k++) mean += env[k];
-    mean /= W * 2 + 1;
+    for (let k = i - windowFrames; k <= i + windowFrames; k++) mean += env[k];
+    mean /= windowFrames * 2 + 1;
     const v = env[i];
-    if (v > mean * 1.45 && v > env[i - 1] && v >= env[i + 1] && v > 0.04) {
-      const t = (i * hop) / sr;
-      if (!beats.length || t - beats[beats.length - 1] > 0.22) beats.push(t);
+    if (v > floor && v > mean * ratio && v > env[i - 1] && v >= env[i + 1] && i - lastPeak >= minGapFrames) {
+      peaks.push(i * hopSec);
+      lastPeak = i;
     }
   }
-  const duration = audio.duration;
-  // estimate BPM from median inter-beat
-  const diffs = beats.slice(1).map((b, i) => b - beats[i]).sort((a, b) => a - b);
+  return peaks;
+}
+
+async function analyzeBeats(file: File): Promise<Beats> {
+  const arr = await file.arrayBuffer();
+  const ac = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+  const audio = await ac.decodeAudioData(arr.slice(0));
+  ac.close();
+  const sr = audio.sampleRate;
+  const hopSec = 0.01; // 10 ms — sub-frame precision for millisecond locking
+
+  // Filter into 3 bands in parallel
+  const [lowBuf, highBuf, fullBuf] = await Promise.all([
+    renderBand(audio, "lowpass", 120, 0.9),      // kick / bass thump
+    renderBand(audio, "bandpass", 4500, 0.9),    // snare / hi-hat crack
+    renderBand(audio, "allpass", 1000, 0.7),     // full-band envelope
+  ]);
+
+  const kickEnv = envelopeOf(lowBuf, sr, hopSec);
+  const snareEnv = envelopeOf(highBuf, sr, hopSec);
+  const fullEnv = envelopeOf(fullBuf, sr, hopSec);
+
+  const kicks = pickPeaks(kickEnv, hopSec, { windowFrames: 30, ratio: 1.35, minGapSec: 0.14, floor: 0.18 });
+  const snares = pickPeaks(snareEnv, hopSec, { windowFrames: 20, ratio: 1.4, minGapSec: 0.08, floor: 0.15 });
+  let times = pickPeaks(fullEnv, hopSec, { windowFrames: 25, ratio: 1.35, minGapSec: 0.16, floor: 0.15 });
+
+  // Prefer kicks as the master timeline if we have enough of them
+  if (kicks.length >= 8) times = kicks.slice();
+
+  const diffs = times.slice(1).map((b, i) => b - times[i]).sort((a, b) => a - b);
   const median = diffs[Math.floor(diffs.length / 2)] || 0.5;
   const bpm = Math.round(60 / median);
-  return { times: beats, bpm, duration };
+
+  return {
+    times,
+    kicks: kicks.length >= 4 ? kicks : times,
+    snares,
+    kickEnv,
+    snareEnv,
+    hop: hopSec,
+    bpm,
+    duration: audio.duration,
+  };
 }
 
 /* ---------------- Finalization worker + save helpers ---------------- */
@@ -230,30 +325,31 @@ function drawFrame(
   H: number,
   effect: Effect,
   progress: number, // 0..1 within this beat segment
-  punch: number, // 0..1 punch intensity right after beat
+  punch: number,      // 0..1 live low-band (bass) intensity — audio-reactive
+  flash: number,      // 0..1 live high-band (snare) intensity — audio-reactive
 ) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
   ctx.save();
 
-  // cover-fit base scale
+  // cover-fit base scale — bass drives zoom directly (audio-reactive)
   const baseScale = Math.max(W / img.width, H / img.height);
-  let scale = baseScale * (1 + 0.06 * progress); // slow zoom drift
+  let scale = baseScale * (1 + 0.04 * progress + 0.22 * punch); // bass pumps the frame
   let dx = 0, dy = 0, rot = 0;
 
   switch (effect) {
     case "shake": {
-      const amp = 30 * punch;
+      const amp = 42 * punch;
       dx = (Math.random() - 0.5) * amp;
       dy = (Math.random() - 0.5) * amp;
       break;
     }
     case "zoom":
-      scale *= 1 + 0.25 * punch;
+      scale *= 1 + 0.35 * punch;
       break;
     case "spin":
-      rot = 0.18 * punch * (progress < 0.5 ? 1 : -1);
-      scale *= 1 + 0.12 * punch;
+      rot = 0.22 * punch * (progress < 0.5 ? 1 : -1);
+      scale *= 1 + 0.15 * punch;
       break;
     case "slide":
       dx = (1 - progress) * W * 0.4;
@@ -271,15 +367,17 @@ function drawFrame(
   ctx.restore();
 
   if (effect === "glitch" && punch > 0.2) {
-    // RGB split
+    // RGB split scales with bass punch
     ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = 0.5 * punch;
-    ctx.drawImage(img, -dw / 2 + 12, -dh / 2, dw, dh);
+    ctx.globalAlpha = 0.55 * punch;
+    const shift = 18 * punch;
+    ctx.drawImage(img, -dw / 2 + shift, -dh / 2, dw, dh);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
   }
-  if (effect === "flash" && punch > 0.5) {
-    ctx.fillStyle = `rgba(255,255,255,${(punch - 0.5) * 1.6})`;
+  // Snare-driven white flash — fires on hi-hat/snare hits regardless of effect
+  if (flash > 0.35) {
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.6)})`;
     ctx.fillRect(0, 0, W, H);
   }
 
