@@ -549,8 +549,9 @@ function Editor() {
         ),
       );
 
-      // Smart Loop & Reverse — extend to cover all beats
-      const segments = beats.times.length;
+      // Cuts are locked to KICK peaks — millisecond-accurate, no human error
+      const cutTimes = beats.kicks.length >= 4 ? beats.kicks : beats.times;
+      const segments = cutTimes.length;
       const seq: { img: HTMLImageElement; effect: Effect }[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
@@ -610,16 +611,19 @@ function Editor() {
       const render = () => {
         if (stop || renderIdRef.current !== myId) return;
         const t = audioEl.currentTime;
-        // find current beat segment
+        // locate current cut segment (kick-locked)
         let i = 0;
-        while (i < beats.times.length - 1 && beats.times[i + 1] <= t) i++;
-        const segStart = beats.times[i] ?? 0;
-        const segEnd = beats.times[i + 1] ?? beats.duration;
+        while (i < cutTimes.length - 1 && cutTimes[i + 1] <= t) i++;
+        const segStart = cutTimes[i] ?? 0;
+        const segEnd = cutTimes[i + 1] ?? beats.duration;
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
-        const punch = Math.max(0, 1 - local * 4); // strong at beat, decays
+        // Live audio-reactive punches — read straight from the waveform envelopes
+        const envIdx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(t / beats.hop)));
+        const punch = beats.kickEnv[envIdx] ?? 0;    // bass thump → zoom/shake
+        const flash = beats.snareEnv[envIdx] ?? 0;   // snare crack → white flash
         const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
-        drawFrame(ctx, item.img, W, H, item.effect, local, punch);
+        drawFrame(ctx, item.img, W, H, item.effect, local, punch, flash);
 
         setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
         raf = requestAnimationFrame(render);
