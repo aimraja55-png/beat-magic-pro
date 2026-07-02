@@ -145,19 +145,22 @@ async function analyzeBeats(file: File): Promise<Beats> {
   const hopSec = 0.01; // 10 ms — sub-frame precision for millisecond locking
 
   // Filter into 3 bands in parallel
-  const [lowBuf, highBuf, fullBuf] = await Promise.all([
+  const [lowBuf, midBuf, hatBuf, fullBuf] = await Promise.all([
     renderBand(audio, "lowpass", 120, 0.9),      // kick / bass thump
-    renderBand(audio, "bandpass", 4500, 0.9),    // snare / hi-hat crack
+    renderBand(audio, "bandpass", 2200, 0.9),    // snare / clap body
+    renderBand(audio, "highpass", 8000, 0.9),    // hi-hat / cymbal shimmer
     renderBand(audio, "allpass", 1000, 0.7),     // full-band envelope
   ]);
 
   const kickEnv = envelopeOf(lowBuf, sr, hopSec);
-  const snareEnv = envelopeOf(highBuf, sr, hopSec);
+  const clapEnv = envelopeOf(midBuf, sr, hopSec);
+  const hatEnv  = envelopeOf(hatBuf, sr, hopSec);
   const fullEnv = envelopeOf(fullBuf, sr, hopSec);
 
   const kicks = pickPeaks(kickEnv, hopSec, { windowFrames: 30, ratio: 1.35, minGapSec: 0.14, floor: 0.18 });
-  const snares = pickPeaks(snareEnv, hopSec, { windowFrames: 20, ratio: 1.4, minGapSec: 0.08, floor: 0.15 });
-  let times = pickPeaks(fullEnv, hopSec, { windowFrames: 25, ratio: 1.35, minGapSec: 0.16, floor: 0.15 });
+  const claps = pickPeaks(clapEnv, hopSec, { windowFrames: 22, ratio: 1.4,  minGapSec: 0.10, floor: 0.15 });
+  const hats  = pickPeaks(hatEnv,  hopSec, { windowFrames: 14, ratio: 1.45, minGapSec: 0.06, floor: 0.12 });
+  let times   = pickPeaks(fullEnv, hopSec, { windowFrames: 25, ratio: 1.35, minGapSec: 0.16, floor: 0.15 });
 
   // Prefer kicks as the master timeline if we have enough of them
   if (kicks.length >= 8) times = kicks.slice();
@@ -169,9 +172,11 @@ async function analyzeBeats(file: File): Promise<Beats> {
   return {
     times,
     kicks: kicks.length >= 4 ? kicks : times,
-    snares,
+    claps,
+    hats,
     kickEnv,
-    snareEnv,
+    clapEnv,
+    hatEnv,
     hop: hopSec,
     bpm,
     duration: audio.duration,
