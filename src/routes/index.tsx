@@ -731,14 +731,25 @@ function Editor() {
         ),
       );
 
-      // Cuts are locked to KICK peaks — millisecond-accurate, no human error
-      const cutTimes = beats.kicks.length >= 4 ? beats.kicks : beats.times;
+      // Master timeline = kicks (bass hits) merged with the strongest hi-hats
+      // for rapid micro-cuts. Deduped + sorted so every cut is millisecond-locked
+      // to something in the waveform.
+      const kickList = beats.kicks.length >= 4 ? beats.kicks : beats.times;
+      const microCuts = beats.hats.filter((_, i) => i % 3 === 0); // every 3rd hat
+      const merged = [...kickList, ...microCuts].sort((a, b) => a - b);
+      const cutTimes: number[] = [];
+      for (const t of merged) {
+        if (cutTimes.length === 0 || t - cutTimes[cutTimes.length - 1] > 0.08) cutTimes.push(t);
+      }
       const segments = cutTimes.length;
-      const seq: { img: HTMLImageElement; effect: Effect }[] = [];
+      const seq: { img: HTMLImageElement; style: StylePack }[] = [];
+      let prevStyle: StylePack | undefined;
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        seq.push({ img: imgs[idx], effect: EFFECTS[i % EFFECTS.length] });
+        const style = pickStylePack(i * 9301 + 49297, prevStyle);
+        seq.push({ img: imgs[idx], style });
+        prevStyle = style;
       }
 
       // canvas + audio → MediaRecorder
@@ -800,12 +811,17 @@ function Editor() {
         const segEnd = cutTimes[i + 1] ?? beats.duration;
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
-        // Live audio-reactive punches — read straight from the waveform envelopes
+        // Live audio-reactive envelopes — literally the waveform driving pixels
         const envIdx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(t / beats.hop)));
-        const punch = beats.kickEnv[envIdx] ?? 0;    // bass thump → zoom/shake
-        const flash = beats.snareEnv[envIdx] ?? 0;   // snare crack → white flash
-        const item = seq[Math.min(i, seq.length - 1)] || { img: imgs[0], effect: "zoom" as Effect };
-        drawFrame(ctx, item.img, W, H, item.effect, local, punch, flash);
+        const punch   = beats.kickEnv[envIdx] ?? 0;  // bass → zoom / screen shake
+        const flash   = beats.clapEnv[envIdx] ?? 0;  // clap/snare → white flash
+        const shimmer = beats.hatEnv[envIdx] ?? 0;   // hi-hat → chroma + grain
+        const fallback: { img: HTMLImageElement; style: StylePack } = {
+          img: imgs[0],
+          style: pickStylePack(0),
+        };
+        const item = seq[Math.min(i, seq.length - 1)] || fallback;
+        drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
 
         setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
         raf = requestAnimationFrame(render);
