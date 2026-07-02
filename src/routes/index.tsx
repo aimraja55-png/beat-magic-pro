@@ -21,9 +21,11 @@ function Index() {
 type Beats = {
   times: number[];      // all onset times (fallback + display)
   kicks: number[];      // low-band (bass/kick) peaks — used for photo cuts
-  snares: number[];     // high-band snare/hi-hat peaks — used for flashes
-  kickEnv: Float32Array; // normalized 0..1 low-band envelope (per hop)
-  snareEnv: Float32Array;// normalized 0..1 high-band envelope (per hop)
+  claps: number[];      // mid-band snare/clap peaks — slide + flash triggers
+  hats: number[];       // ultra-high hi-hat peaks — rapid micro-cuts
+  kickEnv: Float32Array;  // normalized 0..1 bass envelope (per hop)
+  clapEnv: Float32Array;  // normalized 0..1 snare/clap envelope
+  hatEnv: Float32Array;   // normalized 0..1 hi-hat envelope
   hop: number;           // seconds per envelope sample
   bpm: number;
   duration: number;
