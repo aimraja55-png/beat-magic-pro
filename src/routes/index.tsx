@@ -322,76 +322,251 @@ function encodeWebmInWorker({
 }
 
 /* ---------------- Effects per beat ---------------- */
-const EFFECTS = ["shake", "zoom", "glitch", "spin", "flash", "slide"] as const;
-type Effect = (typeof EFFECTS)[number];
+/* ---------------- Cinematic 2050 Effects Engine ----------------
+   Each cut gets a randomized *style pack* — a base transform plus
+   independent modifiers. With 8 bases × 8 entries × 6 exits × 4 filters
+   we get well over 1500 unique combinations, so no two cuts look alike.
+*/
+type StylePack = {
+  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "none";
+  filter: "none" | "warm" | "cool" | "noir" | "sepia";
+  panX: number; panY: number;   // ken-burns direction (-1..1)
+  rotDir: number;               // -1 | 1
+  seed: number;
+};
+
+function mulberry32(a: number) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = a; t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function pickStylePack(seed: number, prev?: StylePack): StylePack {
+  const rand = mulberry32(seed);
+  const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
+  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld"] as const;
+  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn"] as const;
+  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","none"] as const;
+  const filters = ["none","none","warm","cool","noir","sepia"] as const;
+  let base = pick(bases); if (prev && base === prev.base) base = pick(bases);
+  let entry = pick(entries); if (prev && entry === prev.entry) entry = pick(entries);
+  let exit = pick(exits); if (prev && exit === prev.exit) exit = pick(exits);
+  return {
+    base, entry, exit, filter: pick(filters),
+    panX: rand() * 2 - 1, panY: rand() * 2 - 1,
+    rotDir: rand() > 0.5 ? 1 : -1,
+    seed,
+  };
+}
+
+const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
   W: number,
   H: number,
-  effect: Effect,
+  style: StylePack,
   progress: number, // 0..1 within this beat segment
-  punch: number,      // 0..1 live low-band (bass) intensity — audio-reactive
-  flash: number,      // 0..1 live high-band (snare) intensity — audio-reactive
+  punch: number,    // bass 0..1
+  flash: number,    // snare/clap 0..1
+  shimmer: number,  // hi-hat 0..1
 ) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
-  ctx.save();
 
-  // cover-fit base scale — bass drives zoom directly (audio-reactive)
+  // filter tint (cinematic color grade)
+  let filter = "";
+  if (style.filter === "warm") filter = "saturate(1.15) hue-rotate(-10deg) contrast(1.08)";
+  else if (style.filter === "cool") filter = "saturate(1.1) hue-rotate(12deg) contrast(1.05)";
+  else if (style.filter === "noir") filter = "grayscale(0.85) contrast(1.25) brightness(0.95)";
+  else if (style.filter === "sepia") filter = "sepia(0.55) contrast(1.1)";
+
+  // base camera transform
   const baseScale = Math.max(W / img.width, H / img.height);
-  let scale = baseScale * (1 + 0.04 * progress + 0.22 * punch); // bass pumps the frame
+  let scale = baseScale;
   let dx = 0, dy = 0, rot = 0;
+  const eased = EASE(progress);
 
-  switch (effect) {
-    case "shake": {
-      const amp = 42 * punch;
+  switch (style.base) {
+    case "kenburns":
+      scale *= 1.05 + 0.12 * eased + 0.18 * punch;
+      dx = style.panX * 60 * eased;
+      dy = style.panY * 40 * eased;
+      break;
+    case "punchIn":
+      scale *= 1 + 0.25 * eased + 0.28 * punch;
+      break;
+    case "punchOut":
+      scale *= 1.3 - 0.25 * eased + 0.2 * punch;
+      break;
+    case "orbit":
+      scale *= 1.08 + 0.1 * punch;
+      rot = style.rotDir * 0.08 * (eased - 0.5);
+      dx = Math.sin(progress * Math.PI) * 40 * style.panX;
+      break;
+    case "tiltShake": {
+      scale *= 1.05 + 0.22 * punch;
+      rot = style.rotDir * (0.05 + 0.06 * punch);
+      const amp = 55 * punch;
       dx = (Math.random() - 0.5) * amp;
       dy = (Math.random() - 0.5) * amp;
       break;
     }
-    case "zoom":
-      scale *= 1 + 0.35 * punch;
+    case "whipPan":
+      scale *= 1.05;
+      dx = (progress - 0.5) * W * 0.6 * style.rotDir;
       break;
-    case "spin":
-      rot = 0.22 * punch * (progress < 0.5 ? 1 : -1);
-      scale *= 1 + 0.15 * punch;
+    case "dolly":
+      scale *= 1 + 0.35 * eased + 0.25 * punch;
+      dy = -eased * 30;
       break;
-    case "slide":
-      dx = (1 - progress) * W * 0.4;
+    case "handheld": {
+      scale *= 1.05 + 0.18 * punch;
+      const t = progress * Math.PI * 4;
+      dx = Math.sin(t + style.seed) * 12 + (Math.random() - 0.5) * 30 * punch;
+      dy = Math.cos(t * 0.9) * 8 + (Math.random() - 0.5) * 30 * punch;
+      rot = Math.sin(t * 0.4) * 0.02;
       break;
-    case "flash":
-    case "glitch":
-      break;
+    }
   }
 
-  ctx.translate(W / 2 + dx, H / 2 + dy);
-  if (rot) ctx.rotate(rot);
+  // bass-driven screen shake ON TOP of the base
+  if (punch > 0.35) {
+    const amp = 22 * (punch - 0.3);
+    dx += (Math.random() - 0.5) * amp;
+    dy += (Math.random() - 0.5) * amp;
+  }
+
+  // entry animation (first 25% of segment)
+  let entryAlpha = 1;
+  if (progress < 0.25) {
+    const p = progress / 0.25;
+    const inv = 1 - EASE(p);
+    entryAlpha = EASE(p);
+    switch (style.entry) {
+      case "slideL": dx -= W * 0.6 * inv; break;
+      case "slideR": dx += W * 0.6 * inv; break;
+      case "slideU": dy -= H * 0.6 * inv; break;
+      case "slideD": dy += H * 0.6 * inv; break;
+      case "zoomIn": scale *= 0.6 + 0.4 * EASE(p); break;
+      case "spinIn": rot += inv * 0.8 * style.rotDir; scale *= 0.6 + 0.4 * EASE(p); break;
+      case "irisIn": /* handled below via clip */ break;
+      case "blurIn": /* handled via filter */
+        filter = (filter + ` blur(${inv * 14}px)`).trim();
+        break;
+    }
+  }
+  // exit animation (last 20% of segment)
+  if (progress > 0.8 && style.exit !== "none") {
+    const p = (progress - 0.8) / 0.2;
+    const e = EASE(p);
+    switch (style.exit) {
+      case "slideL": dx -= W * 0.5 * e; break;
+      case "slideR": dx += W * 0.5 * e; break;
+      case "slideU": dy -= H * 0.5 * e; break;
+      case "slideD": dy += H * 0.5 * e; break;
+      case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
+      case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
+      case "irisOut": /* handled below via clip */ break;
+    }
+  }
+
   const dw = img.width * scale;
   const dh = img.height * scale;
+
+  // iris (radial clip) support
+  const needIris =
+    (style.entry === "irisIn" && progress < 0.25) ||
+    (style.exit === "irisOut" && progress > 0.8);
+
+  ctx.save();
+  if (needIris) {
+    let r: number;
+    if (style.entry === "irisIn" && progress < 0.25) {
+      const p = progress / 0.25;
+      r = EASE(p) * Math.hypot(W, H) * 0.7;
+    } else {
+      const p = (progress - 0.8) / 0.2;
+      r = (1 - EASE(p)) * Math.hypot(W, H) * 0.7;
+    }
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, Math.max(1, r), 0, Math.PI * 2);
+    ctx.clip();
+  }
+
+  ctx.filter = filter || "none";
+  ctx.globalAlpha = entryAlpha;
+
+  // motion-blur trail — bass and whip-pan produce more trails
+  const trails = Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
+  for (let k = trails; k >= 1; k--) {
+    const f = k / trails;
+    ctx.globalAlpha = entryAlpha * (0.14 + 0.15 * (1 - f));
+    ctx.save();
+    ctx.translate(W / 2 + dx * (1 - f * 0.4), H / 2 + dy * (1 - f * 0.4));
+    if (rot) ctx.rotate(rot * (1 - f * 0.3));
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
+  }
+  // sharp top layer
+  ctx.globalAlpha = entryAlpha;
+  ctx.save();
+  ctx.translate(W / 2 + dx, H / 2 + dy);
+  if (rot) ctx.rotate(rot);
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
 
-  if (effect === "glitch" && punch > 0.2) {
-    // RGB split scales with bass punch
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+
+  // hi-hat shimmer → subtle chromatic aberration
+  if (shimmer > 0.25) {
     ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = 0.55 * punch;
-    const shift = 18 * punch;
-    ctx.drawImage(img, -dw / 2 + shift, -dh / 2, dw, dh);
+    ctx.globalAlpha = 0.35 * shimmer;
+    const s = 10 * shimmer;
+    ctx.drawImage(img, W / 2 - dw / 2 + s + dx, H / 2 - dh / 2 + dy, dw, dh);
+    ctx.globalAlpha = 0.35 * shimmer;
+    ctx.drawImage(img, W / 2 - dw / 2 - s + dx, H / 2 - dh / 2 + dy, dw, dh);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
   }
-  // Snare-driven white flash — fires on hi-hat/snare hits regardless of effect
+
+  // bass-driven RGB split for extra impact
+  if (punch > 0.55) {
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = 0.5 * punch;
+    ctx.drawImage(img, W / 2 - dw / 2 + 22 * punch + dx, H / 2 - dh / 2 + dy, dw, dh);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  ctx.restore();
+
+  // clap/snare white flash
   if (flash > 0.35) {
-    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.6)})`;
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
     ctx.fillRect(0, 0, W, H);
   }
 
-  // subtle vignette for cinematic look
-  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
+  // film grain (very subtle, hi-hat modulated)
+  if (shimmer > 0.15) {
+    ctx.globalAlpha = 0.06 + shimmer * 0.05;
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
+      ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // cinematic vignette
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
   g.addColorStop(0, "rgba(0,0,0,0)");
-  g.addColorStop(1, "rgba(0,0,0,0.55)");
+  g.addColorStop(1, "rgba(0,0,0,0.6)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 }
