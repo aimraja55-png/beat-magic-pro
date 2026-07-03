@@ -410,9 +410,10 @@ function drawFrame(
       dx = Math.sin(progress * Math.PI) * 40 * style.panX;
       break;
     case "tiltShake": {
-      scale *= 1.05 + 0.22 * punch;
-      rot = style.rotDir * (0.05 + 0.06 * punch);
-      const amp = 55 * punch;
+      // Shake ONLY when bass actually punches — otherwise stay calm
+      scale *= 1.03 + 0.18 * punch;
+      rot = style.rotDir * (0.02 + 0.05 * punch);
+      const amp = punch > 0.35 ? 45 * (punch - 0.3) : 0;
       dx = (Math.random() - 0.5) * amp;
       dy = (Math.random() - 0.5) * amp;
       break;
@@ -426,18 +427,21 @@ function drawFrame(
       dy = -eased * 30;
       break;
     case "handheld": {
-      scale *= 1.05 + 0.18 * punch;
+      // Subtle handheld drift — random jitter gated on bass intensity
+      scale *= 1.04 + 0.14 * punch;
       const t = progress * Math.PI * 4;
-      dx = Math.sin(t + style.seed) * 12 + (Math.random() - 0.5) * 30 * punch;
-      dy = Math.cos(t * 0.9) * 8 + (Math.random() - 0.5) * 30 * punch;
-      rot = Math.sin(t * 0.4) * 0.02;
+      const jitter = punch > 0.35 ? 24 * (punch - 0.3) : 0;
+      dx = Math.sin(t + style.seed) * 8 + (Math.random() - 0.5) * jitter;
+      dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
+      rot = Math.sin(t * 0.4) * 0.015;
       break;
     }
   }
 
-  // bass-driven screen shake ON TOP of the base
-  if (punch > 0.35) {
-    const amp = 22 * (punch - 0.3);
+  // Bass-driven screen shake ON TOP of the base — high threshold so
+  // gentle songs stay calm, only heavy kicks trigger real impact.
+  if (punch > 0.55) {
+    const amp = 20 * (punch - 0.5);
     dx += (Math.random() - 0.5) * amp;
     dy += (Math.random() - 0.5) * amp;
   }
