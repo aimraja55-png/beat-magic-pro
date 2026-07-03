@@ -1,0 +1,16 @@
+{
+  "name": "Raja AI Pro-Editor",
+  "short_name": "Raja AI",
+  "description": "Auto beat-sync 1080p video maker — 100% browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0617",
+  "theme_color": "#ff2e88",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

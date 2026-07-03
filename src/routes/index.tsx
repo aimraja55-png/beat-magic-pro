@@ -410,9 +410,10 @@ function drawFrame(
       dx = Math.sin(progress * Math.PI) * 40 * style.panX;
       break;
     case "tiltShake": {
-      scale *= 1.05 + 0.22 * punch;
-      rot = style.rotDir * (0.05 + 0.06 * punch);
-      const amp = 55 * punch;
+      // Shake ONLY when bass actually punches — otherwise stay calm
+      scale *= 1.03 + 0.18 * punch;
+      rot = style.rotDir * (0.02 + 0.05 * punch);
+      const amp = punch > 0.35 ? 45 * (punch - 0.3) : 0;
       dx = (Math.random() - 0.5) * amp;
       dy = (Math.random() - 0.5) * amp;
       break;
@@ -426,18 +427,21 @@ function drawFrame(
       dy = -eased * 30;
       break;
     case "handheld": {
-      scale *= 1.05 + 0.18 * punch;
+      // Subtle handheld drift — random jitter gated on bass intensity
+      scale *= 1.04 + 0.14 * punch;
       const t = progress * Math.PI * 4;
-      dx = Math.sin(t + style.seed) * 12 + (Math.random() - 0.5) * 30 * punch;
-      dy = Math.cos(t * 0.9) * 8 + (Math.random() - 0.5) * 30 * punch;
-      rot = Math.sin(t * 0.4) * 0.02;
+      const jitter = punch > 0.35 ? 24 * (punch - 0.3) : 0;
+      dx = Math.sin(t + style.seed) * 8 + (Math.random() - 0.5) * jitter;
+      dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
+      rot = Math.sin(t * 0.4) * 0.015;
       break;
     }
   }
 
-  // bass-driven screen shake ON TOP of the base
-  if (punch > 0.35) {
-    const amp = 22 * (punch - 0.3);
+  // Bass-driven screen shake ON TOP of the base — high threshold so
+  // gentle songs stay calm, only heavy kicks trigger real impact.
+  if (punch > 0.55) {
+    const amp = 20 * (punch - 0.5);
     dx += (Math.random() - 0.5) * amp;
     dy += (Math.random() - 0.5) * amp;
   }
@@ -712,7 +716,7 @@ function Editor() {
 
     const dims = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
     const [W, H] = dims;
-    const FPS = 30;
+    const FPS = 60; // buttery-smooth cinematic frame rate
 
     try {
       // load images
@@ -776,7 +780,7 @@ function Editor() {
       console.log("[Raja AI] Recorder selected", { mime, recordsMp4Directly });
       const rec = new MediaRecorder(stream, {
         ...(mime ? { mimeType: mime } : {}),
-        videoBitsPerSecond: recordsMp4Directly ? 6_500_000 : 7_500_000,
+        videoBitsPerSecond: recordsMp4Directly ? 9_000_000 : 10_500_000,
         audioBitsPerSecond: 192_000,
       });
       const chunks: Blob[] = [];
@@ -823,7 +827,9 @@ function Editor() {
         const item = seq[Math.min(i, seq.length - 1)] || fallback;
         drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
 
-        setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
+        // record phase → 0..0.95 (mp4 direct) or 0..0.65 (needs encode)
+        const recordCap = recordsMp4Directly ? 0.95 : 0.65;
+        setProgress(Math.min(recordCap, (t / beats.duration) * recordCap));
         raf = requestAnimationFrame(render);
       };
       raf = requestAnimationFrame(render);
@@ -843,29 +849,37 @@ function Editor() {
       if (renderIdRef.current !== myId) return;
       let mp4: Blob;
       if (recordsMp4Directly) {
-        setProgress(0.96);
+        setProgress(0.98);
         setPhase("encode");
         setLog("AI editing complete — MP4 buffer flush हो रहा है…");
         await waitForNextPaint();
         mp4 = webm;
       } else {
-        setProgress(0.7);
+        setProgress(0.66);
         setPhase("encode");
         setLog("AI editing complete — अब 1080p MP4 file बन रही है…");
         const webmBuffer = await webm.arrayBuffer();
-        const mp4Buffer = await encodeWebmInWorker({
-          webmBuffer,
-          width: W,
-          height: H,
-          fps: FPS,
-          duration: beats.duration,
-          onProgress: (p, message) => {
-            const pp = Math.max(0, Math.min(1, p));
-            setProgress(0.7 + pp * 0.3);
-            if (message) setLog(`${message}…`);
-          },
-        });
-        mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+        try {
+          const mp4Buffer = await encodeWebmInWorker({
+            webmBuffer,
+            width: W,
+            height: H,
+            fps: FPS,
+            duration: beats.duration,
+            onProgress: (p, message) => {
+              const pp = Math.max(0, Math.min(1, p));
+              // encoder phase → 0.66..0.99 (100% is reserved for finalize)
+              setProgress(0.66 + pp * 0.33);
+              if (message) setLog(`${message}…`);
+            },
+          });
+          mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+        } catch (encodeErr) {
+          // 100% guarantee: fall back to raw WebM instead of dying at 70%
+          console.warn("[Raja AI] MP4 encoder failed — falling back to WebM output", encodeErr);
+          setLog("MP4 encoder busy — WebM फ़ॉलबैक से 100% पूरा किया जा रहा है…");
+          mp4 = new Blob([webmBuffer], { type: "video/webm" });
+        }
       }
       if (renderIdRef.current !== myId) return;
 
@@ -1081,6 +1095,8 @@ function Editor() {
         )}
 
         {celebrate && <Celebration />}
+
+        <InstallButton />
 
         <footer className="mt-12 text-center text-[11px] text-white/40">
           100% browser • कोई API key नहीं • फाइलें कहीं अपलोड नहीं होतीं
@@ -1301,6 +1317,53 @@ function Spinner({ size = 32 }: { size?: number }) {
       className="animate-spin rounded-full border-4 border-black/20 border-t-black"
       style={{ width: size, height: size }}
     />
+  );
+}
+
+/* PWA install prompt — shows only when browser fires beforeinstallprompt,
+   and hides itself as soon as the app is installed. */
+type BIPEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+function InstallButton() {
+  const [evt, setEvt] = useState<BIPEvent | null>(null);
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const isStandalone =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      (window.navigator as { standalone?: boolean }).standalone === true;
+    if (isStandalone) { setHidden(true); return; }
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setEvt(e as BIPEvent);
+    };
+    const onInstalled = () => { setEvt(null); setHidden(true); };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+  if (hidden || !evt) return null;
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await evt.prompt();
+          const choice = await evt.userChoice;
+          if (choice.outcome === "accepted") setHidden(true);
+          setEvt(null);
+        } catch (err) {
+          console.warn("[Raja AI] install prompt failed", err);
+        }
+      }}
+      className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-white/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-white shadow-[0_10px_40px_-10px_rgba(255,46,136,0.7)] backdrop-blur-xl transition hover:bg-white/20"
+    >
+      <span className="text-base">⬇</span> Install App
+    </button>
   );
 }
 
