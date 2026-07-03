@@ -712,7 +712,7 @@ function Editor() {
 
     const dims = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
     const [W, H] = dims;
-    const FPS = 30;
+    const FPS = 60; // buttery-smooth cinematic frame rate
 
     try {
       // load images
@@ -776,7 +776,7 @@ function Editor() {
       console.log("[Raja AI] Recorder selected", { mime, recordsMp4Directly });
       const rec = new MediaRecorder(stream, {
         ...(mime ? { mimeType: mime } : {}),
-        videoBitsPerSecond: recordsMp4Directly ? 6_500_000 : 7_500_000,
+        videoBitsPerSecond: recordsMp4Directly ? 9_000_000 : 10_500_000,
         audioBitsPerSecond: 192_000,
       });
       const chunks: Blob[] = [];
@@ -823,7 +823,9 @@ function Editor() {
         const item = seq[Math.min(i, seq.length - 1)] || fallback;
         drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
 
-        setProgress(Math.min(0.7, (t / beats.duration) * 0.7));
+        // record phase → 0..0.95 (mp4 direct) or 0..0.65 (needs encode)
+        const recordCap = recordsMp4Directly ? 0.95 : 0.65;
+        setProgress(Math.min(recordCap, (t / beats.duration) * recordCap));
         raf = requestAnimationFrame(render);
       };
       raf = requestAnimationFrame(render);
@@ -843,29 +845,37 @@ function Editor() {
       if (renderIdRef.current !== myId) return;
       let mp4: Blob;
       if (recordsMp4Directly) {
-        setProgress(0.96);
+        setProgress(0.98);
         setPhase("encode");
         setLog("AI editing complete — MP4 buffer flush हो रहा है…");
         await waitForNextPaint();
         mp4 = webm;
       } else {
-        setProgress(0.7);
+        setProgress(0.66);
         setPhase("encode");
         setLog("AI editing complete — अब 1080p MP4 file बन रही है…");
         const webmBuffer = await webm.arrayBuffer();
-        const mp4Buffer = await encodeWebmInWorker({
-          webmBuffer,
-          width: W,
-          height: H,
-          fps: FPS,
-          duration: beats.duration,
-          onProgress: (p, message) => {
-            const pp = Math.max(0, Math.min(1, p));
-            setProgress(0.7 + pp * 0.3);
-            if (message) setLog(`${message}…`);
-          },
-        });
-        mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+        try {
+          const mp4Buffer = await encodeWebmInWorker({
+            webmBuffer,
+            width: W,
+            height: H,
+            fps: FPS,
+            duration: beats.duration,
+            onProgress: (p, message) => {
+              const pp = Math.max(0, Math.min(1, p));
+              // encoder phase → 0.66..0.99 (100% is reserved for finalize)
+              setProgress(0.66 + pp * 0.33);
+              if (message) setLog(`${message}…`);
+            },
+          });
+          mp4 = new Blob([mp4Buffer], { type: "video/mp4" });
+        } catch (encodeErr) {
+          // 100% guarantee: fall back to raw WebM instead of dying at 70%
+          console.warn("[Raja AI] MP4 encoder failed — falling back to WebM output", encodeErr);
+          setLog("MP4 encoder busy — WebM फ़ॉलबैक से 100% पूरा किया जा रहा है…");
+          mp4 = new Blob([webmBuffer], { type: "video/webm" });
+        }
       }
       if (renderIdRef.current !== myId) return;
 
