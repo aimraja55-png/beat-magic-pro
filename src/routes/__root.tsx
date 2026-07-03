@@ -89,6 +89,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:description", content: "Create professional AI-powered beat-synced videos in seconds. Perfect sync, no manual editing required!\"" },
       { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4d2df266-432d-4d1f-92f4-864a9885a8ed/id-preview-f9505202--d03cf504-5bf2-41b2-ad45-69f5318585f1.lovable.app-1782888179582.png" },
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4d2df266-432d-4d1f-92f4-864a9885a8ed/id-preview-f9505202--d03cf504-5bf2-41b2-ad45-69f5318585f1.lovable.app-1782888179582.png" },
+      { name: "theme-color", content: "#ff2e88" },
     ],
     links: [
       {
@@ -99,7 +100,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", href: "/icon-512.png", type: "image/png" },
       { rel: "apple-touch-icon", href: "/icon-512.png" },
     ],
-    meta: undefined as never,
   }),
   shellComponent: RootShell,
   component: RootComponent,
