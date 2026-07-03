@@ -1096,6 +1096,8 @@ function Editor() {
 
         {celebrate && <Celebration />}
 
+        <InstallButton />
+
         <footer className="mt-12 text-center text-[11px] text-white/40">
           100% browser • कोई API key नहीं • फाइलें कहीं अपलोड नहीं होतीं
         </footer>
