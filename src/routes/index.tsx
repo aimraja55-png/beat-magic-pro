@@ -1320,6 +1320,53 @@ function Spinner({ size = 32 }: { size?: number }) {
   );
 }
 
+/* PWA install prompt — shows only when browser fires beforeinstallprompt,
+   and hides itself as soon as the app is installed. */
+type BIPEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+function InstallButton() {
+  const [evt, setEvt] = useState<BIPEvent | null>(null);
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const isStandalone =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      (window.navigator as { standalone?: boolean }).standalone === true;
+    if (isStandalone) { setHidden(true); return; }
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setEvt(e as BIPEvent);
+    };
+    const onInstalled = () => { setEvt(null); setHidden(true); };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+  if (hidden || !evt) return null;
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await evt.prompt();
+          const choice = await evt.userChoice;
+          if (choice.outcome === "accepted") setHidden(true);
+          setEvt(null);
+        } catch (err) {
+          console.warn("[Raja AI] install prompt failed", err);
+        }
+      }}
+      className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-white/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-white shadow-[0_10px_40px_-10px_rgba(255,46,136,0.7)] backdrop-blur-xl transition hover:bg-white/20"
+    >
+      <span className="text-base">⬇</span> Install App
+    </button>
+  );
+}
+
 function Celebration() {
   const pieces = Array.from({ length: 60 });
   return (
