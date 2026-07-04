@@ -866,6 +866,10 @@ function Editor() {
           <SubscribeModal onClose={() => setShowSubscribe(false)}
             onSubscribed={() => { activatePro(30); setPro(true); setShowSubscribe(false); }} />
         )}
+        {showLimitReached && !pro && (
+          <LimitReachedModal onClose={() => setShowLimitReached(false)}
+            onSubscribed={() => { activatePro(30); setPro(true); setShowLimitReached(false); }} />
+        )}
 
         <InstallButton />
 
