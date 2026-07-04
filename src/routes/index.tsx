@@ -553,13 +553,14 @@ function Editor() {
 
       const segments = cutTimes.length - 1;
       const seq: { img: HTMLImageElement; style: StylePack }[] = [];
-      let prevStyle: StylePack | undefined;
+      const recentStyles: StylePack[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        const style = pickStylePack(i * 9301 + 49297, prevStyle);
+        const style = pickStylePack(i * 9301 + 49297, recentStyles);
         seq.push({ img: imgs[idx], style });
-        prevStyle = style;
+        recentStyles.push(style);
+        if (recentStyles.length > 4) recentStyles.shift();
       }
 
       const canvas = document.createElement("canvas");
