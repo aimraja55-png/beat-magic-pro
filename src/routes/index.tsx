@@ -420,7 +420,6 @@ function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number) {
 function Editor() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [beats, setBeats] = useState<Beats | null>(null);
-  const [gallery, setGallery] = useState<File[]>([]);
   const [slots, setSlots] = useState<(File | null)[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
@@ -435,6 +434,7 @@ function Editor() {
   const [pro, setPro] = useState<boolean>(false);
   const [usage, setUsage] = useState<number>(0);
   const [showSubscribe, setShowSubscribe] = useState(false);
+  const [showLimitReached, setShowLimitReached] = useState(false);
   const [sessionOffset, setSessionOffsetState] = useState(0);
 
   const renderIdRef = useRef(0);
@@ -475,20 +475,21 @@ function Editor() {
     }
   }
 
-  function addToGallery(list: FileList | null) {
-    if (!list) return;
-    const arr = Array.from(list).filter((f) => f.type.startsWith("image/"));
-    setGallery((g) => [...g, ...arr]);
-  }
+  function firstEmptyIndex(): number { return slots.findIndex((s) => s === null); }
 
-  function firstEmptyIndex(): number {
-    return slots.findIndex((s) => s === null);
-  }
-
-  function clickGalleryPhoto(file: File) {
-    const idx = firstEmptyIndex();
-    if (idx === -1) return;
+  function fillSlot(idx: number, file: File) {
     setSlots((s) => { const n = [...s]; n[idx] = file; return n; });
+  }
+
+  function fillManySlots(files: File[]) {
+    setSlots((s) => {
+      const n = [...s];
+      let fi = 0;
+      for (let i = 0; i < n.length && fi < files.length; i++) {
+        if (n[i] === null) { n[i] = files[fi++]; }
+      }
+      return n;
+    });
   }
 
   function clearSlot(idx: number) {
@@ -523,8 +524,8 @@ function Editor() {
     const u = getUsageToday();
     setUsage(u);
     if (u >= dailyLimit()) {
-      setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई. ${pro ? "" : "Pro बनने के लिए 60s में popup आएगा."}`);
-      if (!pro) setShowSubscribe(true);
+      setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई.`);
+      if (!pro) setShowLimitReached(true);
       return;
     }
     // Free ad gate
