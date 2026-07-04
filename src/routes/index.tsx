@@ -981,17 +981,19 @@ function SubscribeModal({ onClose, onSubscribed }: { onClose: () => void; onSubs
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-2xl p-5">
       <div className="w-full max-w-sm rounded-3xl border border-[#ff2e88]/40 bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 p-6 text-center shadow-[0_30px_100px_-20px_rgba(255,46,136,0.6)]">
+        <button onClick={onClose}
+          className="absolute right-3 top-3 rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70 hover:bg-white/20">✕</button>
         <div className="text-4xl">✨</div>
-        <h2 className="mt-3 text-2xl font-black">प्रो बनें और जादू देखें!</h2>
+        <h2 className="mt-3 text-2xl font-black">अपने वीडियो को प्रोफेशनल बनाएं!</h2>
+        <p className="mt-2 text-xs text-white/70">बिना वॉटरमार्क के शानदार वीडियो बनाएं और वायरल करें। अनलिमिटेड एक्सेस पाएं।</p>
         <div className="mt-2 text-4xl font-black">
-          <span className="bg-gradient-to-r from-[#ff2e88] to-[#ffb347] bg-clip-text text-transparent">₹49</span>
+          <span className="bg-gradient-to-r from-[#ff2e88] to-[#ffb347] bg-clip-text text-transparent">₹{PRO_PRICE}</span>
           <span className="text-base text-white/60"> /महीना</span>
         </div>
         <ul className="mt-4 space-y-1 text-left text-sm text-white/90">
-          <li>✅ 7 videos/day</li>
-          <li>✅ कोई विज्ञापन नहीं</li>
           <li>✅ कोई वाटरमार्क नहीं</li>
-          <li>✅ Priority rendering</li>
+          <li>✅ विज्ञापन-मुक्त अनुभव</li>
+          <li>✅ अनलिमिटेड वीडियो रेंडरिंग</li>
         </ul>
         <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3 text-xs">
           <div className="text-white/60">UPI ID</div>
@@ -999,7 +1001,7 @@ function SubscribeModal({ onClose, onSubscribed }: { onClose: () => void; onSubs
         </div>
         <a href={UPI_LINK}
           className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] py-3 text-base font-black text-black">
-          📱 UPI से भुगतान करें
+          अभी Pro बनें (₹{PRO_PRICE}/महीना)
         </a>
         <button onClick={onSubscribed}
           className="mt-2 w-full rounded-xl border border-emerald-400/40 bg-emerald-400/10 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-400/20">
@@ -1008,6 +1010,38 @@ function SubscribeModal({ onClose, onSubscribed }: { onClose: () => void; onSubs
         <button onClick={onClose}
           className="mt-2 w-full text-[11px] text-white/40 hover:text-white/70">
           बाद में
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onSubscribed: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-2xl p-5">
+      <div className="relative w-full max-w-sm rounded-3xl border border-red-400/30 bg-gradient-to-br from-slate-900 via-red-950/40 to-slate-900 p-6 text-center shadow-[0_30px_100px_-20px_rgba(255,46,136,0.6)]">
+        <button onClick={onClose}
+          className="absolute right-3 top-3 rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70 hover:bg-white/20">✕</button>
+        <div className="text-4xl">⛔</div>
+        <h2 className="mt-3 text-2xl font-black">आज की लिमिट खत्म!</h2>
+        <div className="mt-4 flex items-center justify-center gap-4 text-3xl">
+          <span title="Ads">📺</span>
+          <span className="text-white/40">+</span>
+          <span title="Watermark">💧</span>
+        </div>
+        <p className="mt-4 text-sm text-white/85">अनलिमिटेड वीडियो बनाने के लिए Pro बनें (₹{PRO_PRICE}/m)</p>
+        <p className="mt-2 text-[11px] text-white/50">अगर अभी नहीं, तो कल फिर से 10 फ्री वीडियो क्रेडिट पाएं!</p>
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3 text-xs">
+          <div className="text-white/60">UPI ID</div>
+          <div className="mt-1 font-mono text-base font-bold text-white">{UPI_ID}</div>
+        </div>
+        <a href={UPI_LINK}
+          className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] py-3 text-base font-black text-black">
+          अभी Pro बनें (₹{PRO_PRICE}/महीना)
+        </a>
+        <button onClick={onSubscribed}
+          className="mt-2 w-full rounded-xl border border-emerald-400/40 bg-emerald-400/10 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-400/20">
+          भुगतान पूरा — Pro activate करें
         </button>
       </div>
     </div>
