@@ -548,9 +548,16 @@ function Editor() {
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
     setLog("रेंडर शुरू…");
 
-    const dims = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
-    const [W, H] = dims;
-    const FPS = 60;
+    // Adaptive quality: low-end devices → 720p@30 for stability
+    const nav = navigator as Navigator & { deviceMemory?: number };
+    const cores = nav.hardwareConcurrency ?? 4;
+    const mem = nav.deviceMemory ?? 4;
+    const lowEnd = cores < 4 || mem < 4;
+    const highRes = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
+    const lowRes = aspect === "9:16" ? [720, 1280] : [1280, 720];
+    const [W, H] = lowEnd ? lowRes : highRes;
+    const FPS = lowEnd ? 30 : 60;
+    const bitrate = lowEnd ? 5_000_000 : 9_000_000;
     const drawWM = !pro; // watermark for free users
 
     // Long-video: cap segment to 60s, resume from session offset
@@ -584,12 +591,31 @@ function Editor() {
       if (cutTimes[cutTimes.length - 1] < targetDuration - 0.1) cutTimes.push(targetDuration);
 
       const segments = cutTimes.length - 1;
+      // Detect calm segments (low kick + low clap sustained → smooth pan, no jitter)
+      const isCalmAt = (tAbs: number) => {
+        const startIdx = Math.max(0, Math.floor((tAbs - 0.5) / beats.hop));
+        const endIdx = Math.min(beats.kickEnv.length - 1, Math.floor((tAbs + 0.5) / beats.hop));
+        let kSum = 0, cSum = 0, n = 0;
+        for (let k = startIdx; k <= endIdx; k++) {
+          kSum += beats.kickEnv[k] ?? 0;
+          cSum += beats.clapEnv[k] ?? 0;
+          n++;
+        }
+        if (n === 0) return false;
+        return (kSum / n) < 0.18 && (cSum / n) < 0.18;
+      };
+
       const seq: { img: HTMLImageElement; style: StylePack }[] = [];
       const recentStyles: StylePack[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        const style = pickStylePack(i * 9301 + 49297, recentStyles);
+        let style = pickStylePack(i * 9301 + 49297, recentStyles);
+        // Force smoothPan + fadeIn/fadeOut in calm passages
+        const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
+        if (isCalmAt(segMid)) {
+          style = { ...style, base: "smoothPan", entry: "fadeIn", exit: "fadeOut" };
+        }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
         if (recentStyles.length > 4) recentStyles.shift();
@@ -616,7 +642,7 @@ function Editor() {
       const isMp4 = mime.startsWith("video/mp4");
       const rec = new MediaRecorder(stream, {
         ...(mime ? { mimeType: mime } : {}),
-        videoBitsPerSecond: 9_000_000,
+        videoBitsPerSecond: bitrate,
         audioBitsPerSecond: 192_000,
       });
       const chunks: Blob[] = [];
