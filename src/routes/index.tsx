@@ -200,10 +200,10 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type StylePack = {
-  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "none";
-  filter: "none" | "warm" | "cool" | "noir" | "sepia";
+  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "none";
+  filter: "none" | "warm" | "cool" | "noir" | "sepia" | "tealOrange" | "bleach" | "neon" | "vhs";
   panX: number; panY: number; rotDir: number; seed: number;
 };
 function mulberry32(a: number) {
@@ -214,16 +214,24 @@ function mulberry32(a: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function pickStylePack(seed: number, prev?: StylePack): StylePack {
+function pickStylePack(seed: number, recent: StylePack[] = []): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld"] as const;
-  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn"] as const;
-  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","none"] as const;
-  const filters = ["none","none","warm","cool","noir","sepia"] as const;
-  let base = pick(bases); if (prev && base === prev.base) base = pick(bases);
-  let entry = pick(entries); if (prev && entry === prev.entry) entry = pick(entries);
-  let exit = pick(exits); if (prev && exit === prev.exit) exit = pick(exits);
+  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan"] as const;
+  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn"] as const;
+  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","none"] as const;
+  const filters = ["none","none","warm","cool","noir","sepia","tealOrange","bleach","neon","vhs"] as const;
+  const recentBases = new Set(recent.slice(-4).map(s => s.base));
+  const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
+  const recentExits = new Set(recent.slice(-4).map(s => s.exit));
+  const pickUnique = <T,>(arr: readonly T[], used: Set<T>): T => {
+    const avail = arr.filter(a => !used.has(a));
+    const pool = avail.length ? avail : arr;
+    return pool[Math.floor(rand() * pool.length)];
+  };
+  const base = pickUnique(bases, recentBases);
+  const entry = pickUnique(entries, recentEntries);
+  const exit = pickUnique(exits, recentExits);
   return { base, entry, exit, filter: pick(filters), panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
 }
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
