@@ -246,6 +246,10 @@ function drawFrame(
   else if (style.filter === "cool") filter = "saturate(1.1) hue-rotate(12deg) contrast(1.05)";
   else if (style.filter === "noir") filter = "grayscale(0.85) contrast(1.25) brightness(0.95)";
   else if (style.filter === "sepia") filter = "sepia(0.55) contrast(1.1)";
+  else if (style.filter === "tealOrange") filter = "saturate(1.25) hue-rotate(-6deg) contrast(1.15)";
+  else if (style.filter === "bleach") filter = "saturate(0.55) contrast(1.25) brightness(1.05)";
+  else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
+  else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
 
   const baseScale = Math.max(W / img.width, H / img.height);
   let scale = baseScale; let dx = 0, dy = 0, rot = 0;
@@ -277,8 +281,31 @@ function drawFrame(
       dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
       rot = Math.sin(t * 0.4) * 0.015; break;
     }
+    case "parallax3D": {
+      scale *= 1.1 + 0.08 * eased + 0.15 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t) * 55 * style.panX;
+      dy = Math.cos(t * 0.7) * 30 * style.panY;
+      rot = style.rotDir * 0.03 * Math.sin(t); break;
+    }
+    case "spiralZoom": {
+      scale *= 1 + 0.28 * eased + 0.2 * punch;
+      const t = progress * Math.PI * 2;
+      rot = style.rotDir * eased * 0.25;
+      dx = Math.sin(t) * 20; dy = Math.cos(t) * 20; break;
+    }
+    case "dutchAngle": {
+      scale *= 1.08 + 0.12 * eased + 0.18 * punch;
+      rot = style.rotDir * (0.05 + 0.03 * eased);
+      dx = style.panX * 40 * eased; break;
+    }
+    case "smoothPan": {
+      // Calm ease-in-out pan for soft passages — no shake, no bass amplification
+      scale *= 1.04 + 0.08 * eased;
+      dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
+    }
   }
-  if (punch > 0.55) {
+  if (punch > 0.55 && style.base !== "smoothPan") {
     const amp = 20 * (punch - 0.5);
     dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
   }
@@ -294,6 +321,9 @@ function drawFrame(
       case "spinIn": rot += inv * 0.8 * style.rotDir; scale *= 0.6 + 0.4 * EASE(p); break;
       case "irisIn": break;
       case "blurIn": filter = (filter + ` blur(${inv * 14}px)`).trim(); break;
+      case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
+      case "chromaIn": filter = (filter + ` saturate(${1 + inv * 0.8})`).trim(); break;
+      case "fadeIn": /* alpha handled above */ break;
     }
   }
   if (progress > 0.8 && style.exit !== "none") {
@@ -306,6 +336,7 @@ function drawFrame(
       case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
       case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
       case "irisOut": break;
+      case "fadeOut": entryAlpha *= 1 - e * 0.75; break;
     }
   }
   const dw = img.width * scale; const dh = img.height * scale;
