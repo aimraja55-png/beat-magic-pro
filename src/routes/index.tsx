@@ -768,44 +768,27 @@ function Editor() {
                 📸 Step 2 — फोटो भरें ({filledCount}/{photosNeeded})
               </h2>
               <label className="cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
-                + गैलरी में जोड़ें
+                + Bulk fill
                 <input type="file" accept="image/*" multiple className="hidden"
-                  onChange={(e) => { addToGallery(e.target.files); e.currentTarget.value = ""; }} />
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []).filter(f => f.type.startsWith("image/"));
+                    if (files.length) fillManySlots(files);
+                    e.currentTarget.value = "";
+                  }} />
               </label>
             </div>
 
-            {/* Slots (top half) */}
             <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-              <div className="mb-2 text-[10px] uppercase tracking-widest text-white/50">Photo Slots</div>
+              <div className="mb-2 text-[10px] uppercase tracking-widest text-white/50">
+                खाली स्लॉट पर टच करें — Gallery अपने आप खुलेगी
+              </div>
               <div className="grid grid-cols-4 gap-2">
                 {slots.map((f, i) => (
                   <SlotBox key={i} file={f} index={i} isNext={firstEmptyIndex() === i}
+                    onPick={(file) => fillSlot(i, file)}
                     onClear={() => clearSlot(i)} />
                 ))}
               </div>
-            </div>
-
-            {/* Gallery (bottom half) */}
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-[10px] uppercase tracking-widest text-white/50">Your Gallery — क्लिक करें</div>
-                {gallery.length > 0 && (
-                  <button onClick={() => setGallery([])} className="text-[10px] text-white/50 hover:text-white">clear</button>
-                )}
-              </div>
-              {gallery.length === 0 ? (
-                <div className="py-8 text-center text-xs text-white/40">
-                  ऊपर "+ गैलरी में जोड़ें" दबाकर photos add करें
-                </div>
-              ) : (
-                <div className="grid max-h-[45vh] grid-cols-4 gap-2 overflow-y-auto pr-1">
-                  {gallery.map((f, i) => (
-                    <GalleryTile key={i} file={f}
-                      disabled={firstEmptyIndex() === -1}
-                      onClick={() => clickGalleryPhoto(f)} />
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         )}
