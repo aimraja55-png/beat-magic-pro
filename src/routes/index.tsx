@@ -41,9 +41,9 @@ type SavePickerWindow = Window & typeof globalThis & {
 
 /* ---------------- Business logic ---------------- */
 const UPI_ID = "9263334055-4@ybl";
-const UPI_LINK = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent("Raja AI Pro")}&am=49&cu=INR&tn=${encodeURIComponent("Raja AI Pro Subscription")}`;
-const FREE_DAILY = 5;
-const PRO_DAILY = 7;
+const PRO_PRICE = 99;
+const UPI_LINK = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent("Raja AI Pro")}&am=${PRO_PRICE}&cu=INR&tn=${encodeURIComponent("Raja AI Pro Subscription")}`;
+const FREE_DAILY = 10;
 const LONG_MAX_SEC = 60;
 const AD_SECONDS = 30;
 
@@ -69,7 +69,7 @@ function getUsageToday(): number {
 function bumpUsage() {
   try { localStorage.setItem("raja_usage", JSON.stringify({ date: todayKey(), count: getUsageToday() + 1 })); } catch { /* ignore */ }
 }
-function dailyLimit() { return isPro() ? PRO_DAILY : FREE_DAILY; }
+function dailyLimit() { return isPro() ? Infinity : FREE_DAILY; }
 function popupShownToday(): boolean {
   try { return localStorage.getItem("raja_popup_date") === todayKey(); } catch { return false; }
 }
