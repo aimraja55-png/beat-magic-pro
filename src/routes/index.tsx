@@ -41,9 +41,9 @@ type SavePickerWindow = Window & typeof globalThis & {
 
 /* ---------------- Business logic ---------------- */
 const UPI_ID = "9263334055-4@ybl";
-const UPI_LINK = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent("Raja AI Pro")}&am=49&cu=INR&tn=${encodeURIComponent("Raja AI Pro Subscription")}`;
-const FREE_DAILY = 5;
-const PRO_DAILY = 7;
+const PRO_PRICE = 99;
+const UPI_LINK = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent("Raja AI Pro")}&am=${PRO_PRICE}&cu=INR&tn=${encodeURIComponent("Raja AI Pro Subscription")}`;
+const FREE_DAILY = 10;
 const LONG_MAX_SEC = 60;
 const AD_SECONDS = 30;
 
@@ -69,7 +69,7 @@ function getUsageToday(): number {
 function bumpUsage() {
   try { localStorage.setItem("raja_usage", JSON.stringify({ date: todayKey(), count: getUsageToday() + 1 })); } catch { /* ignore */ }
 }
-function dailyLimit() { return isPro() ? PRO_DAILY : FREE_DAILY; }
+function dailyLimit() { return isPro() ? Infinity : FREE_DAILY; }
 function popupShownToday(): boolean {
   try { return localStorage.getItem("raja_popup_date") === todayKey(); } catch { return false; }
 }
@@ -200,10 +200,10 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type StylePack = {
-  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "none";
-  filter: "none" | "warm" | "cool" | "noir" | "sepia";
+  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "none";
+  filter: "none" | "warm" | "cool" | "noir" | "sepia" | "tealOrange" | "bleach" | "neon" | "vhs";
   panX: number; panY: number; rotDir: number; seed: number;
 };
 function mulberry32(a: number) {
@@ -214,16 +214,24 @@ function mulberry32(a: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function pickStylePack(seed: number, prev?: StylePack): StylePack {
+function pickStylePack(seed: number, recent: StylePack[] = []): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld"] as const;
-  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn"] as const;
-  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","none"] as const;
-  const filters = ["none","none","warm","cool","noir","sepia"] as const;
-  let base = pick(bases); if (prev && base === prev.base) base = pick(bases);
-  let entry = pick(entries); if (prev && entry === prev.entry) entry = pick(entries);
-  let exit = pick(exits); if (prev && exit === prev.exit) exit = pick(exits);
+  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan"] as const;
+  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn"] as const;
+  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","none"] as const;
+  const filters = ["none","none","warm","cool","noir","sepia","tealOrange","bleach","neon","vhs"] as const;
+  const recentBases = new Set(recent.slice(-4).map(s => s.base));
+  const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
+  const recentExits = new Set(recent.slice(-4).map(s => s.exit));
+  const pickUnique = <T,>(arr: readonly T[], used: Set<T>): T => {
+    const avail = arr.filter(a => !used.has(a));
+    const pool = avail.length ? avail : arr;
+    return pool[Math.floor(rand() * pool.length)];
+  };
+  const base = pickUnique(bases, recentBases);
+  const entry = pickUnique(entries, recentEntries);
+  const exit = pickUnique(exits, recentExits);
   return { base, entry, exit, filter: pick(filters), panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
 }
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
@@ -238,6 +246,10 @@ function drawFrame(
   else if (style.filter === "cool") filter = "saturate(1.1) hue-rotate(12deg) contrast(1.05)";
   else if (style.filter === "noir") filter = "grayscale(0.85) contrast(1.25) brightness(0.95)";
   else if (style.filter === "sepia") filter = "sepia(0.55) contrast(1.1)";
+  else if (style.filter === "tealOrange") filter = "saturate(1.25) hue-rotate(-6deg) contrast(1.15)";
+  else if (style.filter === "bleach") filter = "saturate(0.55) contrast(1.25) brightness(1.05)";
+  else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
+  else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
 
   const baseScale = Math.max(W / img.width, H / img.height);
   let scale = baseScale; let dx = 0, dy = 0, rot = 0;
@@ -269,8 +281,31 @@ function drawFrame(
       dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
       rot = Math.sin(t * 0.4) * 0.015; break;
     }
+    case "parallax3D": {
+      scale *= 1.1 + 0.08 * eased + 0.15 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t) * 55 * style.panX;
+      dy = Math.cos(t * 0.7) * 30 * style.panY;
+      rot = style.rotDir * 0.03 * Math.sin(t); break;
+    }
+    case "spiralZoom": {
+      scale *= 1 + 0.28 * eased + 0.2 * punch;
+      const t = progress * Math.PI * 2;
+      rot = style.rotDir * eased * 0.25;
+      dx = Math.sin(t) * 20; dy = Math.cos(t) * 20; break;
+    }
+    case "dutchAngle": {
+      scale *= 1.08 + 0.12 * eased + 0.18 * punch;
+      rot = style.rotDir * (0.05 + 0.03 * eased);
+      dx = style.panX * 40 * eased; break;
+    }
+    case "smoothPan": {
+      // Calm ease-in-out pan for soft passages — no shake, no bass amplification
+      scale *= 1.04 + 0.08 * eased;
+      dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
+    }
   }
-  if (punch > 0.55) {
+  if (punch > 0.55 && style.base !== "smoothPan") {
     const amp = 20 * (punch - 0.5);
     dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
   }
@@ -286,6 +321,9 @@ function drawFrame(
       case "spinIn": rot += inv * 0.8 * style.rotDir; scale *= 0.6 + 0.4 * EASE(p); break;
       case "irisIn": break;
       case "blurIn": filter = (filter + ` blur(${inv * 14}px)`).trim(); break;
+      case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
+      case "chromaIn": filter = (filter + ` saturate(${1 + inv * 0.8})`).trim(); break;
+      case "fadeIn": /* alpha handled above */ break;
     }
   }
   if (progress > 0.8 && style.exit !== "none") {
@@ -298,6 +336,7 @@ function drawFrame(
       case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
       case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
       case "irisOut": break;
+      case "fadeOut": entryAlpha *= 1 - e * 0.75; break;
     }
   }
   const dw = img.width * scale; const dh = img.height * scale;
@@ -381,7 +420,6 @@ function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number) {
 function Editor() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [beats, setBeats] = useState<Beats | null>(null);
-  const [gallery, setGallery] = useState<File[]>([]);
   const [slots, setSlots] = useState<(File | null)[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
@@ -396,6 +434,7 @@ function Editor() {
   const [pro, setPro] = useState<boolean>(false);
   const [usage, setUsage] = useState<number>(0);
   const [showSubscribe, setShowSubscribe] = useState(false);
+  const [showLimitReached, setShowLimitReached] = useState(false);
   const [sessionOffset, setSessionOffsetState] = useState(0);
 
   const renderIdRef = useRef(0);
@@ -436,20 +475,21 @@ function Editor() {
     }
   }
 
-  function addToGallery(list: FileList | null) {
-    if (!list) return;
-    const arr = Array.from(list).filter((f) => f.type.startsWith("image/"));
-    setGallery((g) => [...g, ...arr]);
-  }
+  function firstEmptyIndex(): number { return slots.findIndex((s) => s === null); }
 
-  function firstEmptyIndex(): number {
-    return slots.findIndex((s) => s === null);
-  }
-
-  function clickGalleryPhoto(file: File) {
-    const idx = firstEmptyIndex();
-    if (idx === -1) return;
+  function fillSlot(idx: number, file: File) {
     setSlots((s) => { const n = [...s]; n[idx] = file; return n; });
+  }
+
+  function fillManySlots(files: File[]) {
+    setSlots((s) => {
+      const n = [...s];
+      let fi = 0;
+      for (let i = 0; i < n.length && fi < files.length; i++) {
+        if (n[i] === null) { n[i] = files[fi++]; }
+      }
+      return n;
+    });
   }
 
   function clearSlot(idx: number) {
@@ -484,8 +524,8 @@ function Editor() {
     const u = getUsageToday();
     setUsage(u);
     if (u >= dailyLimit()) {
-      setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई. ${pro ? "" : "Pro बनने के लिए 60s में popup आएगा."}`);
-      if (!pro) setShowSubscribe(true);
+      setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई.`);
+      if (!pro) setShowLimitReached(true);
       return;
     }
     // Free ad gate
@@ -508,9 +548,16 @@ function Editor() {
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
     setLog("रेंडर शुरू…");
 
-    const dims = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
-    const [W, H] = dims;
-    const FPS = 60;
+    // Adaptive quality: low-end devices → 720p@30 for stability
+    const nav = navigator as Navigator & { deviceMemory?: number };
+    const cores = nav.hardwareConcurrency ?? 4;
+    const mem = nav.deviceMemory ?? 4;
+    const lowEnd = cores < 4 || mem < 4;
+    const highRes = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
+    const lowRes = aspect === "9:16" ? [720, 1280] : [1280, 720];
+    const [W, H] = lowEnd ? lowRes : highRes;
+    const FPS = lowEnd ? 30 : 60;
+    const bitrate = lowEnd ? 5_000_000 : 9_000_000;
     const drawWM = !pro; // watermark for free users
 
     // Long-video: cap segment to 60s, resume from session offset
@@ -544,14 +591,34 @@ function Editor() {
       if (cutTimes[cutTimes.length - 1] < targetDuration - 0.1) cutTimes.push(targetDuration);
 
       const segments = cutTimes.length - 1;
+      // Detect calm segments (low kick + low clap sustained → smooth pan, no jitter)
+      const isCalmAt = (tAbs: number) => {
+        const startIdx = Math.max(0, Math.floor((tAbs - 0.5) / beats.hop));
+        const endIdx = Math.min(beats.kickEnv.length - 1, Math.floor((tAbs + 0.5) / beats.hop));
+        let kSum = 0, cSum = 0, n = 0;
+        for (let k = startIdx; k <= endIdx; k++) {
+          kSum += beats.kickEnv[k] ?? 0;
+          cSum += beats.clapEnv[k] ?? 0;
+          n++;
+        }
+        if (n === 0) return false;
+        return (kSum / n) < 0.18 && (cSum / n) < 0.18;
+      };
+
       const seq: { img: HTMLImageElement; style: StylePack }[] = [];
-      let prevStyle: StylePack | undefined;
+      const recentStyles: StylePack[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        const style = pickStylePack(i * 9301 + 49297, prevStyle);
+        let style = pickStylePack(i * 9301 + 49297, recentStyles);
+        // Force smoothPan + fadeIn/fadeOut in calm passages
+        const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
+        if (isCalmAt(segMid)) {
+          style = { ...style, base: "smoothPan", entry: "fadeIn", exit: "fadeOut" };
+        }
         seq.push({ img: imgs[idx], style });
-        prevStyle = style;
+        recentStyles.push(style);
+        if (recentStyles.length > 4) recentStyles.shift();
       }
 
       const canvas = document.createElement("canvas");
@@ -575,7 +642,7 @@ function Editor() {
       const isMp4 = mime.startsWith("video/mp4");
       const rec = new MediaRecorder(stream, {
         ...(mime ? { mimeType: mime } : {}),
-        videoBitsPerSecond: 9_000_000,
+        videoBitsPerSecond: bitrate,
         audioBitsPerSecond: 192_000,
       });
       const chunks: Blob[] = [];
@@ -727,44 +794,27 @@ function Editor() {
                 📸 Step 2 — फोटो भरें ({filledCount}/{photosNeeded})
               </h2>
               <label className="cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
-                + गैलरी में जोड़ें
+                + Bulk fill
                 <input type="file" accept="image/*" multiple className="hidden"
-                  onChange={(e) => { addToGallery(e.target.files); e.currentTarget.value = ""; }} />
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []).filter(f => f.type.startsWith("image/"));
+                    if (files.length) fillManySlots(files);
+                    e.currentTarget.value = "";
+                  }} />
               </label>
             </div>
 
-            {/* Slots (top half) */}
             <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-              <div className="mb-2 text-[10px] uppercase tracking-widest text-white/50">Photo Slots</div>
+              <div className="mb-2 text-[10px] uppercase tracking-widest text-white/50">
+                खाली स्लॉट पर टच करें — Gallery अपने आप खुलेगी
+              </div>
               <div className="grid grid-cols-4 gap-2">
                 {slots.map((f, i) => (
                   <SlotBox key={i} file={f} index={i} isNext={firstEmptyIndex() === i}
+                    onPick={(file) => fillSlot(i, file)}
                     onClear={() => clearSlot(i)} />
                 ))}
               </div>
-            </div>
-
-            {/* Gallery (bottom half) */}
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-[10px] uppercase tracking-widest text-white/50">Your Gallery — क्लिक करें</div>
-                {gallery.length > 0 && (
-                  <button onClick={() => setGallery([])} className="text-[10px] text-white/50 hover:text-white">clear</button>
-                )}
-              </div>
-              {gallery.length === 0 ? (
-                <div className="py-8 text-center text-xs text-white/40">
-                  ऊपर "+ गैलरी में जोड़ें" दबाकर photos add करें
-                </div>
-              ) : (
-                <div className="grid max-h-[45vh] grid-cols-4 gap-2 overflow-y-auto pr-1">
-                  {gallery.map((f, i) => (
-                    <GalleryTile key={i} file={f}
-                      disabled={firstEmptyIndex() === -1}
-                      onClick={() => clickGalleryPhoto(f)} />
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -842,6 +892,10 @@ function Editor() {
           <SubscribeModal onClose={() => setShowSubscribe(false)}
             onSubscribed={() => { activatePro(30); setPro(true); setShowSubscribe(false); }} />
         )}
+        {showLimitReached && !pro && (
+          <LimitReachedModal onClose={() => setShowLimitReached(false)}
+            onSubscribed={() => { activatePro(30); setPro(true); setShowLimitReached(false); }} />
+        )}
 
         <InstallButton />
 
@@ -880,16 +934,18 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
   );
 }
 
-function SlotBox({ file, index, isNext, onClear }: { file: File | null; index: number; isNext: boolean; onClear: () => void }) {
+function SlotBox({ file, index, isNext, onPick, onClear }: { file: File | null; index: number; isNext: boolean; onPick: (f: File) => void; onClear: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!file) { setUrl(null); return; }
     const u = URL.createObjectURL(file); setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [file]);
+  const openPicker = () => inputRef.current?.click();
   if (file && url) {
     return (
-      <div className="group relative aspect-square overflow-hidden rounded-lg border-2 border-emerald-400/60">
+      <div className="group relative aspect-square overflow-hidden rounded-lg border-2 border-emerald-400/60 animate-scale-in">
         <img src={url} alt="" className="h-full w-full object-cover" />
         <button type="button" onClick={onClear}
           className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px]">✕</button>
@@ -898,30 +954,15 @@ function SlotBox({ file, index, isNext, onClear }: { file: File | null; index: n
     );
   }
   return (
-    <div className={`relative flex aspect-square items-center justify-center rounded-lg border-2 border-dashed text-white/60 ${
-      isNext ? "border-[#ff2e88] bg-[#ff2e88]/10 animate-pulse" : "border-white/20 bg-white/5"
-    }`}>
-      <div className="text-[10px] font-bold tracking-widest">
-        {isNext ? "◉ NEXT" : `#${index + 1}`}
-      </div>
-    </div>
-  );
-}
-
-function GalleryTile({ file, disabled, onClick }: { file: File; disabled: boolean; onClick: () => void }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    const u = URL.createObjectURL(file); setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [file]);
-  return (
-    <button type="button" disabled={disabled} onClick={onClick}
-      className={`relative aspect-square overflow-hidden rounded-lg border transition ${
-        disabled
-          ? "cursor-not-allowed border-white/10 opacity-40"
-          : "border-white/15 hover:border-[#ff2e88] hover:scale-95 active:scale-90"
+    <button type="button" onClick={openPicker}
+      className={`relative flex aspect-square items-center justify-center rounded-lg border-2 border-dashed text-white/60 transition active:scale-90 ${
+        isNext ? "border-[#ff2e88] bg-[#ff2e88]/10 animate-pulse" : "border-white/20 bg-white/5 hover:border-white/40"
       }`}>
-      {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+      <div className="text-[10px] font-bold tracking-widest">
+        {isNext ? "◉ TAP" : `#${index + 1}`}
+      </div>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onPick(f); e.currentTarget.value = ""; }} />
     </button>
   );
 }
@@ -970,17 +1011,19 @@ function SubscribeModal({ onClose, onSubscribed }: { onClose: () => void; onSubs
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-2xl p-5">
       <div className="w-full max-w-sm rounded-3xl border border-[#ff2e88]/40 bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 p-6 text-center shadow-[0_30px_100px_-20px_rgba(255,46,136,0.6)]">
+        <button onClick={onClose}
+          className="absolute right-3 top-3 rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70 hover:bg-white/20">✕</button>
         <div className="text-4xl">✨</div>
-        <h2 className="mt-3 text-2xl font-black">प्रो बनें और जादू देखें!</h2>
+        <h2 className="mt-3 text-2xl font-black">अपने वीडियो को प्रोफेशनल बनाएं!</h2>
+        <p className="mt-2 text-xs text-white/70">बिना वॉटरमार्क के शानदार वीडियो बनाएं और वायरल करें। अनलिमिटेड एक्सेस पाएं।</p>
         <div className="mt-2 text-4xl font-black">
-          <span className="bg-gradient-to-r from-[#ff2e88] to-[#ffb347] bg-clip-text text-transparent">₹49</span>
+          <span className="bg-gradient-to-r from-[#ff2e88] to-[#ffb347] bg-clip-text text-transparent">₹{PRO_PRICE}</span>
           <span className="text-base text-white/60"> /महीना</span>
         </div>
         <ul className="mt-4 space-y-1 text-left text-sm text-white/90">
-          <li>✅ 7 videos/day</li>
-          <li>✅ कोई विज्ञापन नहीं</li>
           <li>✅ कोई वाटरमार्क नहीं</li>
-          <li>✅ Priority rendering</li>
+          <li>✅ विज्ञापन-मुक्त अनुभव</li>
+          <li>✅ अनलिमिटेड वीडियो रेंडरिंग</li>
         </ul>
         <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3 text-xs">
           <div className="text-white/60">UPI ID</div>
@@ -988,7 +1031,7 @@ function SubscribeModal({ onClose, onSubscribed }: { onClose: () => void; onSubs
         </div>
         <a href={UPI_LINK}
           className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] py-3 text-base font-black text-black">
-          📱 UPI से भुगतान करें
+          अभी Pro बनें (₹{PRO_PRICE}/महीना)
         </a>
         <button onClick={onSubscribed}
           className="mt-2 w-full rounded-xl border border-emerald-400/40 bg-emerald-400/10 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-400/20">
@@ -997,6 +1040,38 @@ function SubscribeModal({ onClose, onSubscribed }: { onClose: () => void; onSubs
         <button onClick={onClose}
           className="mt-2 w-full text-[11px] text-white/40 hover:text-white/70">
           बाद में
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onSubscribed: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-2xl p-5">
+      <div className="relative w-full max-w-sm rounded-3xl border border-red-400/30 bg-gradient-to-br from-slate-900 via-red-950/40 to-slate-900 p-6 text-center shadow-[0_30px_100px_-20px_rgba(255,46,136,0.6)]">
+        <button onClick={onClose}
+          className="absolute right-3 top-3 rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70 hover:bg-white/20">✕</button>
+        <div className="text-4xl">⛔</div>
+        <h2 className="mt-3 text-2xl font-black">आज की लिमिट खत्म!</h2>
+        <div className="mt-4 flex items-center justify-center gap-4 text-3xl">
+          <span title="Ads">📺</span>
+          <span className="text-white/40">+</span>
+          <span title="Watermark">💧</span>
+        </div>
+        <p className="mt-4 text-sm text-white/85">अनलिमिटेड वीडियो बनाने के लिए Pro बनें (₹{PRO_PRICE}/m)</p>
+        <p className="mt-2 text-[11px] text-white/50">अगर अभी नहीं, तो कल फिर से 10 फ्री वीडियो क्रेडिट पाएं!</p>
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3 text-xs">
+          <div className="text-white/60">UPI ID</div>
+          <div className="mt-1 font-mono text-base font-bold text-white">{UPI_ID}</div>
+        </div>
+        <a href={UPI_LINK}
+          className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] py-3 text-base font-black text-black">
+          अभी Pro बनें (₹{PRO_PRICE}/महीना)
+        </a>
+        <button onClick={onSubscribed}
+          className="mt-2 w-full rounded-xl border border-emerald-400/40 bg-emerald-400/10 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-400/20">
+          भुगतान पूरा — Pro activate करें
         </button>
       </div>
     </div>
