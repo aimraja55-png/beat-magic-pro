@@ -904,16 +904,18 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
   );
 }
 
-function SlotBox({ file, index, isNext, onClear }: { file: File | null; index: number; isNext: boolean; onClear: () => void }) {
+function SlotBox({ file, index, isNext, onPick, onClear }: { file: File | null; index: number; isNext: boolean; onPick: (f: File) => void; onClear: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!file) { setUrl(null); return; }
     const u = URL.createObjectURL(file); setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [file]);
+  const openPicker = () => inputRef.current?.click();
   if (file && url) {
     return (
-      <div className="group relative aspect-square overflow-hidden rounded-lg border-2 border-emerald-400/60">
+      <div className="group relative aspect-square overflow-hidden rounded-lg border-2 border-emerald-400/60 animate-scale-in">
         <img src={url} alt="" className="h-full w-full object-cover" />
         <button type="button" onClick={onClear}
           className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px]">✕</button>
@@ -922,30 +924,15 @@ function SlotBox({ file, index, isNext, onClear }: { file: File | null; index: n
     );
   }
   return (
-    <div className={`relative flex aspect-square items-center justify-center rounded-lg border-2 border-dashed text-white/60 ${
-      isNext ? "border-[#ff2e88] bg-[#ff2e88]/10 animate-pulse" : "border-white/20 bg-white/5"
-    }`}>
-      <div className="text-[10px] font-bold tracking-widest">
-        {isNext ? "◉ NEXT" : `#${index + 1}`}
-      </div>
-    </div>
-  );
-}
-
-function GalleryTile({ file, disabled, onClick }: { file: File; disabled: boolean; onClick: () => void }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    const u = URL.createObjectURL(file); setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [file]);
-  return (
-    <button type="button" disabled={disabled} onClick={onClick}
-      className={`relative aspect-square overflow-hidden rounded-lg border transition ${
-        disabled
-          ? "cursor-not-allowed border-white/10 opacity-40"
-          : "border-white/15 hover:border-[#ff2e88] hover:scale-95 active:scale-90"
+    <button type="button" onClick={openPicker}
+      className={`relative flex aspect-square items-center justify-center rounded-lg border-2 border-dashed text-white/60 transition active:scale-90 ${
+        isNext ? "border-[#ff2e88] bg-[#ff2e88]/10 animate-pulse" : "border-white/20 bg-white/5 hover:border-white/40"
       }`}>
-      {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+      <div className="text-[10px] font-bold tracking-widest">
+        {isNext ? "◉ TAP" : `#${index + 1}`}
+      </div>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onPick(f); e.currentTarget.value = ""; }} />
     </button>
   );
 }
