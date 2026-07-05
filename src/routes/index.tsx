@@ -657,15 +657,28 @@ function Editor() {
         })),
       );
 
-      const kickList = beats.kicks.length >= 4 ? beats.kicks : beats.times;
-      const microCuts = beats.hats.filter((_, i) => i % 3 === 0);
+      // ── DEEP-EMOTIONAL BEAT MAPPING ──
+      // Classify the whole song first — dictates cut density + effect ferocity
+      const intensity = classifyIntensity(beats.kickEnv);
+      // Only cut on STRONG bass peaks. Weak thumps become smooth pans, not cuts.
+      const bassPeakThreshold = intensity === "aggressive" ? 0.42 : intensity === "chill" ? 0.62 : 0.5;
+      const strongKicks = (beats.kicks.length >= 4 ? beats.kicks : beats.times).filter((t) => {
+        const idx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(t / beats.hop)));
+        return (beats.kickEnv[idx] ?? 0) >= bassPeakThreshold;
+      });
+      // Micro-cuts only when the song is genuinely energetic
+      const microCuts = intensity === "chill" ? [] :
+        beats.hats.filter((_, i) => i % (intensity === "aggressive" ? 3 : 5) === 0);
+      const kickList = strongKicks.length >= 3 ? strongKicks : (beats.kicks.length >= 4 ? beats.kicks : beats.times);
       const mergedAll = [...kickList, ...microCuts]
         .filter((t) => t >= startOffset && t < startOffset + targetDuration)
         .map((t) => t - startOffset)
         .sort((a, b) => a - b);
       const cutTimes: number[] = [0];
+      // Minimum photo hold time — chill songs get longer, aggressive shorter
+      const minHold = intensity === "chill" ? 1.4 : intensity === "aggressive" ? 0.28 : 0.55;
       for (const t of mergedAll) {
-        if (t - cutTimes[cutTimes.length - 1] > 0.08) cutTimes.push(t);
+        if (t - cutTimes[cutTimes.length - 1] > minHold) cutTimes.push(t);
       }
       // Ensure a final cut extends to the very end (fixes end-freeze)
       if (cutTimes[cutTimes.length - 1] < targetDuration - 0.1) cutTimes.push(targetDuration);
@@ -687,19 +700,36 @@ function Editor() {
 
       const seq: { img: HTMLImageElement; style: StylePack }[] = [];
       const recentStyles: StylePack[] = [];
+      // Zero-repetition memory across renders for this same audio file
+      const bannedStyles = new Set<string>(getUsedStyles(audioFile));
+      const usedThisRun: string[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        let style = pickStylePack(i * 9301 + 49297, recentStyles);
+        // seed varies with time so re-renders never draw the same combos
+        const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
+        let style = pickStylePack(seed, recentStyles, bannedStyles, intensity);
         // Force smoothPan + fadeIn/fadeOut in calm passages
         const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
         if (isCalmAt(segMid)) {
-          style = { ...style, base: "smoothPan", entry: "fadeIn", exit: "fadeOut" };
+          const calmBases = ["smoothPan","kenburns","liquidWarp","parallax3D"] as const;
+          const calmEntries = ["fadeIn","liquidIn","blurIn"] as const;
+          const calmExits = ["fadeOut","liquidOut","blurOut"] as const;
+          const r = mulberry32(seed);
+          style = {
+            ...style,
+            base: calmBases[Math.floor(r() * calmBases.length)],
+            entry: calmEntries[Math.floor(r() * calmEntries.length)],
+            exit: calmExits[Math.floor(r() * calmExits.length)],
+          };
         }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
+        usedThisRun.push(style.base, style.entry, style.exit);
         if (recentStyles.length > 4) recentStyles.shift();
       }
+      // Persist so the NEXT render of this song picks fresh effects
+      pushUsedStyles(audioFile, usedThisRun);
 
       const canvas = document.createElement("canvas");
       canvas.width = W; canvas.height = H;
