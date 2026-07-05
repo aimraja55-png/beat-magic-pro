@@ -86,6 +86,29 @@ function saveSessionOffset(f: File, seconds: number) {
 function clearSessionOffset(f: File) {
   try { localStorage.removeItem(sessionKey(f)); } catch { /* ignore */ }
 }
+function audioMemoryKey(f: File) { return `raja_stylemem_${f.name}_${f.size}`; }
+function getUsedStyles(f: File): string[] {
+  try { return JSON.parse(localStorage.getItem(audioMemoryKey(f)) || "[]"); } catch { return []; }
+}
+function pushUsedStyles(f: File, tokens: string[]) {
+  try {
+    const prev = getUsedStyles(f);
+    const merged = Array.from(new Set([...prev, ...tokens]));
+    // cap memory so we never run out of variety
+    const capped = merged.slice(-40);
+    localStorage.setItem(audioMemoryKey(f), JSON.stringify(capped));
+  } catch { /* ignore */ }
+}
+function classifyIntensity(kickEnv: Float32Array): "chill" | "normal" | "aggressive" {
+  if (kickEnv.length === 0) return "normal";
+  let sum = 0, hits = 0;
+  for (let i = 0; i < kickEnv.length; i++) { sum += kickEnv[i]; if (kickEnv[i] > 0.55) hits++; }
+  const mean = sum / kickEnv.length;
+  const density = hits / kickEnv.length;
+  if (mean < 0.18 && density < 0.03) return "chill";
+  if (mean > 0.32 || density > 0.08) return "aggressive";
+  return "normal";
+}
 
 /* ---------------- Beat detection ---------------- */
 async function renderBand(audio: AudioBuffer, type: BiquadFilterType, frequency: number, Q: number): Promise<Float32Array> {
@@ -200,9 +223,9 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type StylePack = {
-  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "none";
+  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan" | "layerPeel3D" | "liquidWarp" | "photoMerge";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn" | "liquidIn" | "shatterIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "liquidOut" | "none";
   filter: "none" | "warm" | "cool" | "noir" | "sepia" | "tealOrange" | "bleach" | "neon" | "vhs";
   panX: number; panY: number; rotDir: number; seed: number;
 };
@@ -214,18 +237,23 @@ function mulberry32(a: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function pickStylePack(seed: number, recent: StylePack[] = []): StylePack {
+function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan"] as const;
-  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn"] as const;
-  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","none"] as const;
+  const allBases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan","layerPeel3D","liquidWarp","photoMerge"] as const;
+  const allEntries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn","liquidIn","shatterIn"] as const;
+  const allExits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","liquidOut","none"] as const;
+  const calmBases = ["kenburns","smoothPan","parallax3D","dolly","orbit","liquidWarp"] as const;
+  const wildBases = ["punchIn","punchOut","tiltShake","whipPan","handheld","spiralZoom","dutchAngle","layerPeel3D","photoMerge"] as const;
+  const bases = intensity === "chill" ? calmBases : intensity === "aggressive" ? wildBases : allBases;
+  const entries = allEntries;
+  const exits = allExits;
   const filters = ["none","none","warm","cool","noir","sepia","tealOrange","bleach","neon","vhs"] as const;
   const recentBases = new Set(recent.slice(-4).map(s => s.base));
   const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
   const recentExits = new Set(recent.slice(-4).map(s => s.exit));
   const pickUnique = <T,>(arr: readonly T[], used: Set<T>): T => {
-    const avail = arr.filter(a => !used.has(a));
+    const avail = arr.filter(a => !used.has(a) && !banned.has(String(a)));
     const pool = avail.length ? avail : arr;
     return pool[Math.floor(rand() * pool.length)];
   };
@@ -304,6 +332,25 @@ function drawFrame(
       scale *= 1.04 + 0.08 * eased;
       dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
     }
+    case "layerPeel3D": {
+      // Fake 3D: perspective-like x-skew via horizontal squeeze + rotate
+      scale *= 1.08 + 0.1 * eased + 0.15 * punch;
+      rot = style.rotDir * (0.02 + 0.06 * eased);
+      dx = style.panX * 90 * (0.5 - Math.abs(0.5 - eased)); break;
+    }
+    case "liquidWarp": {
+      // Gentle sinusoidal drift — feels like liquid
+      scale *= 1.06 + 0.06 * eased + 0.12 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t + style.seed * 0.01) * 35;
+      dy = Math.cos(t * 0.6 + style.seed * 0.01) * 22;
+      rot = Math.sin(t * 0.5) * 0.02 * style.rotDir; break;
+    }
+    case "photoMerge": {
+      // Base draw is smooth; overlay effect done later as picture-in-picture
+      scale *= 1.05 + 0.1 * eased + 0.12 * punch;
+      dx = style.panX * 30 * eased; dy = style.panY * 20 * eased; break;
+    }
   }
   if (punch > 0.55 && style.base !== "smoothPan") {
     const amp = 20 * (punch - 0.5);
@@ -324,6 +371,18 @@ function drawFrame(
       case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
       case "chromaIn": filter = (filter + ` saturate(${1 + inv * 0.8})`).trim(); break;
       case "fadeIn": /* alpha handled above */ break;
+      case "liquidIn": {
+        // Liquid ripple = strong blur decaying + slight vertical wobble
+        filter = (filter + ` blur(${inv * 18}px) saturate(${1 + inv * 0.6})`).trim();
+        dy += Math.sin(progress * Math.PI * 6) * 12 * inv; break;
+      }
+      case "shatterIn": {
+        // Random offset that snaps into place (glass shatter re-assembling)
+        const jitter = inv * 60;
+        dx += (Math.sin(style.seed) * 0.5 + 0.5 - 0.5) * jitter;
+        dy += (Math.cos(style.seed * 1.3) * 0.5 + 0.5 - 0.5) * jitter;
+        rot += inv * 0.12 * style.rotDir; break;
+      }
     }
   }
   if (progress > 0.8 && style.exit !== "none") {
@@ -337,6 +396,10 @@ function drawFrame(
       case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
       case "irisOut": break;
       case "fadeOut": entryAlpha *= 1 - e * 0.75; break;
+      case "liquidOut": {
+        filter = (filter + ` blur(${e * 16}px) saturate(${1 + e * 0.6})`).trim();
+        dy += Math.sin(progress * Math.PI * 6) * 14 * e; entryAlpha *= 1 - e * 0.4; break;
+      }
     }
   }
   const dw = img.width * scale; const dh = img.height * scale;
@@ -384,6 +447,23 @@ function drawFrame(
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
   }
   ctx.restore();
+  // photoMerge: picture-in-picture inset of the same image as an accent
+  if (style.base === "photoMerge") {
+    const insetW = W * 0.36;
+    const insetH = insetW * (img.height / img.width);
+    const ix = W - insetW - W * 0.06 + Math.sin(progress * Math.PI) * 12;
+    const iy = H - insetH - H * 0.08;
+    const insetAlpha = 0.85 * (0.7 + 0.3 * Math.sin(progress * Math.PI));
+    ctx.save();
+    ctx.globalAlpha = insetAlpha;
+    ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = Math.max(2, W * 0.003);
+    ctx.shadowColor = "rgba(255,46,136,0.7)"; ctx.shadowBlur = 24;
+    ctx.strokeRect(ix - 2, iy - 2, insetW + 4, insetH + 4);
+    ctx.shadowBlur = 0;
+    ctx.filter = filter || "none";
+    ctx.drawImage(img, ix, iy, insetW, insetH);
+    ctx.restore();
+  }
   if (flash > 0.35) {
     ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
     ctx.fillRect(0, 0, W, H);
@@ -577,15 +657,28 @@ function Editor() {
         })),
       );
 
-      const kickList = beats.kicks.length >= 4 ? beats.kicks : beats.times;
-      const microCuts = beats.hats.filter((_, i) => i % 3 === 0);
+      // ── DEEP-EMOTIONAL BEAT MAPPING ──
+      // Classify the whole song first — dictates cut density + effect ferocity
+      const intensity = classifyIntensity(beats.kickEnv);
+      // Only cut on STRONG bass peaks. Weak thumps become smooth pans, not cuts.
+      const bassPeakThreshold = intensity === "aggressive" ? 0.42 : intensity === "chill" ? 0.62 : 0.5;
+      const strongKicks = (beats.kicks.length >= 4 ? beats.kicks : beats.times).filter((t) => {
+        const idx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(t / beats.hop)));
+        return (beats.kickEnv[idx] ?? 0) >= bassPeakThreshold;
+      });
+      // Micro-cuts only when the song is genuinely energetic
+      const microCuts = intensity === "chill" ? [] :
+        beats.hats.filter((_, i) => i % (intensity === "aggressive" ? 3 : 5) === 0);
+      const kickList = strongKicks.length >= 3 ? strongKicks : (beats.kicks.length >= 4 ? beats.kicks : beats.times);
       const mergedAll = [...kickList, ...microCuts]
         .filter((t) => t >= startOffset && t < startOffset + targetDuration)
         .map((t) => t - startOffset)
         .sort((a, b) => a - b);
       const cutTimes: number[] = [0];
+      // Minimum photo hold time — chill songs get longer, aggressive shorter
+      const minHold = intensity === "chill" ? 1.4 : intensity === "aggressive" ? 0.28 : 0.55;
       for (const t of mergedAll) {
-        if (t - cutTimes[cutTimes.length - 1] > 0.08) cutTimes.push(t);
+        if (t - cutTimes[cutTimes.length - 1] > minHold) cutTimes.push(t);
       }
       // Ensure a final cut extends to the very end (fixes end-freeze)
       if (cutTimes[cutTimes.length - 1] < targetDuration - 0.1) cutTimes.push(targetDuration);
@@ -607,19 +700,36 @@ function Editor() {
 
       const seq: { img: HTMLImageElement; style: StylePack }[] = [];
       const recentStyles: StylePack[] = [];
+      // Zero-repetition memory across renders for this same audio file
+      const bannedStyles = new Set<string>(getUsedStyles(audioFile));
+      const usedThisRun: string[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        let style = pickStylePack(i * 9301 + 49297, recentStyles);
+        // seed varies with time so re-renders never draw the same combos
+        const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
+        let style = pickStylePack(seed, recentStyles, bannedStyles, intensity);
         // Force smoothPan + fadeIn/fadeOut in calm passages
         const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
         if (isCalmAt(segMid)) {
-          style = { ...style, base: "smoothPan", entry: "fadeIn", exit: "fadeOut" };
+          const calmBases = ["smoothPan","kenburns","liquidWarp","parallax3D"] as const;
+          const calmEntries = ["fadeIn","liquidIn","blurIn"] as const;
+          const calmExits = ["fadeOut","liquidOut","blurOut"] as const;
+          const r = mulberry32(seed);
+          style = {
+            ...style,
+            base: calmBases[Math.floor(r() * calmBases.length)],
+            entry: calmEntries[Math.floor(r() * calmEntries.length)],
+            exit: calmExits[Math.floor(r() * calmExits.length)],
+          };
         }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
+        usedThisRun.push(style.base, style.entry, style.exit);
         if (recentStyles.length > 4) recentStyles.shift();
       }
+      // Persist so the NEXT render of this song picks fresh effects
+      pushUsedStyles(audioFile, usedThisRun);
 
       const canvas = document.createElement("canvas");
       canvas.width = W; canvas.height = H;
