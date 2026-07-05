@@ -309,6 +309,25 @@ function drawFrame(
       scale *= 1.04 + 0.08 * eased;
       dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
     }
+    case "layerPeel3D": {
+      // Fake 3D: perspective-like x-skew via horizontal squeeze + rotate
+      scale *= 1.08 + 0.1 * eased + 0.15 * punch;
+      rot = style.rotDir * (0.02 + 0.06 * eased);
+      dx = style.panX * 90 * (0.5 - Math.abs(0.5 - eased)); break;
+    }
+    case "liquidWarp": {
+      // Gentle sinusoidal drift — feels like liquid
+      scale *= 1.06 + 0.06 * eased + 0.12 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t + style.seed * 0.01) * 35;
+      dy = Math.cos(t * 0.6 + style.seed * 0.01) * 22;
+      rot = Math.sin(t * 0.5) * 0.02 * style.rotDir; break;
+    }
+    case "photoMerge": {
+      // Base draw is smooth; overlay effect done later as picture-in-picture
+      scale *= 1.05 + 0.1 * eased + 0.12 * punch;
+      dx = style.panX * 30 * eased; dy = style.panY * 20 * eased; break;
+    }
   }
   if (punch > 0.55 && style.base !== "smoothPan") {
     const amp = 20 * (punch - 0.5);
@@ -329,6 +348,18 @@ function drawFrame(
       case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
       case "chromaIn": filter = (filter + ` saturate(${1 + inv * 0.8})`).trim(); break;
       case "fadeIn": /* alpha handled above */ break;
+      case "liquidIn": {
+        // Liquid ripple = strong blur decaying + slight vertical wobble
+        filter = (filter + ` blur(${inv * 18}px) saturate(${1 + inv * 0.6})`).trim();
+        dy += Math.sin(progress * Math.PI * 6) * 12 * inv; break;
+      }
+      case "shatterIn": {
+        // Random offset that snaps into place (glass shatter re-assembling)
+        const jitter = inv * 60;
+        dx += (Math.sin(style.seed) * 0.5 + 0.5 - 0.5) * jitter;
+        dy += (Math.cos(style.seed * 1.3) * 0.5 + 0.5 - 0.5) * jitter;
+        rot += inv * 0.12 * style.rotDir; break;
+      }
     }
   }
   if (progress > 0.8 && style.exit !== "none") {
@@ -342,6 +373,10 @@ function drawFrame(
       case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
       case "irisOut": break;
       case "fadeOut": entryAlpha *= 1 - e * 0.75; break;
+      case "liquidOut": {
+        filter = (filter + ` blur(${e * 16}px) saturate(${1 + e * 0.6})`).trim();
+        dy += Math.sin(progress * Math.PI * 6) * 14 * e; entryAlpha *= 1 - e * 0.4; break;
+      }
     }
   }
   const dw = img.width * scale; const dh = img.height * scale;
