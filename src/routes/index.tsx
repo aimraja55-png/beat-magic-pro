@@ -86,6 +86,29 @@ function saveSessionOffset(f: File, seconds: number) {
 function clearSessionOffset(f: File) {
   try { localStorage.removeItem(sessionKey(f)); } catch { /* ignore */ }
 }
+function audioMemoryKey(f: File) { return `raja_stylemem_${f.name}_${f.size}`; }
+function getUsedStyles(f: File): string[] {
+  try { return JSON.parse(localStorage.getItem(audioMemoryKey(f)) || "[]"); } catch { return []; }
+}
+function pushUsedStyles(f: File, tokens: string[]) {
+  try {
+    const prev = getUsedStyles(f);
+    const merged = Array.from(new Set([...prev, ...tokens]));
+    // cap memory so we never run out of variety
+    const capped = merged.slice(-40);
+    localStorage.setItem(audioMemoryKey(f), JSON.stringify(capped));
+  } catch { /* ignore */ }
+}
+function classifyIntensity(kickEnv: Float32Array): "chill" | "normal" | "aggressive" {
+  if (kickEnv.length === 0) return "normal";
+  let sum = 0, hits = 0;
+  for (let i = 0; i < kickEnv.length; i++) { sum += kickEnv[i]; if (kickEnv[i] > 0.55) hits++; }
+  const mean = sum / kickEnv.length;
+  const density = hits / kickEnv.length;
+  if (mean < 0.18 && density < 0.03) return "chill";
+  if (mean > 0.32 || density > 0.08) return "aggressive";
+  return "normal";
+}
 
 /* ---------------- Beat detection ---------------- */
 async function renderBand(audio: AudioBuffer, type: BiquadFilterType, frequency: number, Q: number): Promise<Float32Array> {
