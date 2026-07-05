@@ -424,6 +424,23 @@ function drawFrame(
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
   }
   ctx.restore();
+  // photoMerge: picture-in-picture inset of the same image as an accent
+  if (style.base === "photoMerge") {
+    const insetW = W * 0.36;
+    const insetH = insetW * (img.height / img.width);
+    const ix = W - insetW - W * 0.06 + Math.sin(progress * Math.PI) * 12;
+    const iy = H - insetH - H * 0.08;
+    const insetAlpha = 0.85 * (0.7 + 0.3 * Math.sin(progress * Math.PI));
+    ctx.save();
+    ctx.globalAlpha = insetAlpha;
+    ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = Math.max(2, W * 0.003);
+    ctx.shadowColor = "rgba(255,46,136,0.7)"; ctx.shadowBlur = 24;
+    ctx.strokeRect(ix - 2, iy - 2, insetW + 4, insetH + 4);
+    ctx.shadowBlur = 0;
+    ctx.filter = filter || "none";
+    ctx.drawImage(img, ix, iy, insetW, insetH);
+    ctx.restore();
+  }
   if (flash > 0.35) {
     ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
     ctx.fillRect(0, 0, W, H);
