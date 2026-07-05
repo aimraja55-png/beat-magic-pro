@@ -200,9 +200,9 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type StylePack = {
-  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "none";
+  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan" | "layerPeel3D" | "liquidWarp" | "photoMerge";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn" | "liquidIn" | "shatterIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "liquidOut" | "none";
   filter: "none" | "warm" | "cool" | "noir" | "sepia" | "tealOrange" | "bleach" | "neon" | "vhs";
   panX: number; panY: number; rotDir: number; seed: number;
 };
@@ -214,18 +214,23 @@ function mulberry32(a: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function pickStylePack(seed: number, recent: StylePack[] = []): StylePack {
+function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const bases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan"] as const;
-  const entries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn"] as const;
-  const exits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","none"] as const;
+  const allBases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan","layerPeel3D","liquidWarp","photoMerge"] as const;
+  const allEntries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn","liquidIn","shatterIn"] as const;
+  const allExits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","liquidOut","none"] as const;
+  const calmBases = ["kenburns","smoothPan","parallax3D","dolly","orbit","liquidWarp"] as const;
+  const wildBases = ["punchIn","punchOut","tiltShake","whipPan","handheld","spiralZoom","dutchAngle","layerPeel3D","photoMerge"] as const;
+  const bases = intensity === "chill" ? calmBases : intensity === "aggressive" ? wildBases : allBases;
+  const entries = allEntries;
+  const exits = allExits;
   const filters = ["none","none","warm","cool","noir","sepia","tealOrange","bleach","neon","vhs"] as const;
   const recentBases = new Set(recent.slice(-4).map(s => s.base));
   const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
   const recentExits = new Set(recent.slice(-4).map(s => s.exit));
   const pickUnique = <T,>(arr: readonly T[], used: Set<T>): T => {
-    const avail = arr.filter(a => !used.has(a));
+    const avail = arr.filter(a => !used.has(a) && !banned.has(String(a)));
     const pool = avail.length ? avail : arr;
     return pool[Math.floor(rand() * pool.length)];
   };
