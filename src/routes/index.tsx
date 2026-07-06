@@ -273,7 +273,7 @@ function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<strin
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
-  ctx: CanvasRenderingContext2D, img: HTMLImageElement, W: number, H: number,
+  ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
   style: StylePack, progress: number, punch: number, flash: number, shimmer: number,
 ) {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
