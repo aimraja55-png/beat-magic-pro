@@ -1023,6 +1023,9 @@ function Editor() {
               <p className="mt-1 text-xs text-white/55">पहले देखें, फिर SAVE / EXPORT दबाएँ.</p>
             </div>
             <video src={videoUrl} controls autoPlay muted={false} playsInline preload="auto"
+              controlsList="nodownload nofullscreen noremoteplayback"
+              disablePictureInPicture
+              onContextMenu={(e) => e.preventDefault()}
               className="w-full rounded-xl bg-black shadow-[0_24px_80px_-35px_rgba(255,46,136,0.75)]" />
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
@@ -1044,6 +1047,40 @@ function Editor() {
         {showLimitReached && !pro && (
           <LimitReachedModal onClose={() => setShowLimitReached(false)}
             onSubscribed={() => { activatePro(30); setPro(true); setShowLimitReached(false); }} />
+        )}
+
+        {galleryOpen && (
+          <GallerySheet
+            pool={photoPool}
+            slotsFilled={filledCount}
+            slotsTotal={slots.length}
+            onAddPhotos={(files) => setPhotoPool((p) => [...p, ...files])}
+            onPickPhoto={(f) => {
+              if (galleryTargetSlot != null) fillSlot(galleryTargetSlot, f);
+              else {
+                const idx = slots.findIndex((s) => s === null);
+                if (idx >= 0) fillSlot(idx, f);
+              }
+              // Advance target to next empty slot for continuous fill-view feedback
+              setSlots((prev) => {
+                const next = [...prev];
+                if (galleryTargetSlot != null) next[galleryTargetSlot] = next[galleryTargetSlot] ?? f;
+                const nextEmpty = next.findIndex((s) => s === null);
+                setGalleryTargetSlot(nextEmpty >= 0 ? nextEmpty : null);
+                return prev; // fillSlot already applied change; return prev to avoid override
+              });
+            }}
+            onClose={() => { setGalleryOpen(false); setGalleryTargetSlot(null); }}
+          />
+        )}
+
+        {qualityOpen && beats && (
+          <QualityModal
+            durationSec={exactDurationSec}
+            current={quality}
+            onCancel={() => setQualityOpen(false)}
+            onConfirm={confirmQuality}
+          />
         )}
 
         <InstallButton />
