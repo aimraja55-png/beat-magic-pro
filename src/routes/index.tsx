@@ -647,16 +647,18 @@ function Editor() {
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
     setLog("रेंडर शुरू…");
 
-    // Adaptive quality: low-end devices → 720p@30 for stability
+    // Adaptive: user-chosen quality, downgraded on low-end devices to avoid Aw-Snap
     const nav = navigator as Navigator & { deviceMemory?: number };
     const cores = nav.hardwareConcurrency ?? 4;
     const mem = nav.deviceMemory ?? 4;
     const lowEnd = cores < 4 || mem < 4;
-    const highRes = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
-    const lowRes = aspect === "9:16" ? [720, 1280] : [1280, 720];
-    const [W, H] = lowEnd ? lowRes : highRes;
-    const FPS = lowEnd ? 30 : 60;
-    const bitrate = lowEnd ? 5_000_000 : 9_000_000;
+    let cfg = QUALITIES[quality];
+    if (lowEnd && (quality === "1080p" || quality === "4k")) cfg = QUALITIES["720p"];
+    if (lowEnd && quality === "4k") cfg = QUALITIES["720p"];
+    const W = aspect === "9:16" ? cfg.wShort : cfg.wLong;
+    const H = aspect === "9:16" ? cfg.hShort : cfg.hLong;
+    const FPS = cfg.fps;
+    const bitrate = cfg.bitrate;
     const drawWM = !pro; // watermark for free users
 
     // Long-video: cap segment to 60s, resume from session offset
@@ -665,15 +667,31 @@ function Editor() {
       ? Math.min(LONG_MAX_SEC, beats.duration - startOffset)
       : beats.duration;
 
+    const imageUrls: string[] = [];
+    const bitmaps: ImageBitmap[] = [];
     try {
-      const imageUrls: string[] = [];
+      // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
+      // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
+      const targetMax = Math.max(W, H) * 1.25;
       const imgs = await Promise.all(
-        photos.map((f) => new Promise<HTMLImageElement>((res, rej) => {
-          const i = new Image();
-          const u = URL.createObjectURL(f);
-          imageUrls.push(u);
-          i.onload = () => res(i); i.onerror = rej; i.src = u;
-        })),
+        photos.map(async (f) => {
+          try {
+            const bmp = await createImageBitmap(f, {
+              resizeWidth: targetMax,
+              resizeQuality: "high",
+            } as ImageBitmapOptions);
+            bitmaps.push(bmp);
+            return bmp as unknown as CanvasImageSource & { width: number; height: number };
+          } catch {
+            // Fallback for browsers that reject resize option
+            return await new Promise<HTMLImageElement>((res, rej) => {
+              const i = new Image();
+              const u = URL.createObjectURL(f);
+              imageUrls.push(u);
+              i.onload = () => res(i); i.onerror = rej; i.src = u;
+            });
+          }
+        }),
       );
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
@@ -831,6 +849,7 @@ function Editor() {
       await ac.close();
       URL.revokeObjectURL(audioUrl);
       imageUrls.forEach((u) => URL.revokeObjectURL(u));
+      bitmaps.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
       if (renderIdRef.current !== myId) return;
 
       setPhase("encode");
