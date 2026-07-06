@@ -524,6 +524,11 @@ function Editor() {
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showLimitReached, setShowLimitReached] = useState(false);
   const [sessionOffset, setSessionOffsetState] = useState(0);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryTargetSlot, setGalleryTargetSlot] = useState<number | null>(null);
+  const [photoPool, setPhotoPool] = useState<File[]>([]);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [quality, setQuality] = useState<QualityKey>("1080p");
 
   const renderIdRef = useRef(0);
 
@@ -531,6 +536,9 @@ function Editor() {
   const filledCount = slots.filter(Boolean).length;
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
   const remainingToday = Math.max(0, dailyLimit() - usage);
+  const exactDurationSec = beats
+    ? (mode === "long" ? Math.min(LONG_MAX_SEC, beats.duration - sessionOffset) : beats.duration)
+    : 0;
 
   useEffect(() => {
     setPro(isPro());
