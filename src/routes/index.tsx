@@ -30,6 +30,14 @@ type Beats = {
   duration: number;
 };
 type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
+type QualityKey = "480p" | "720p" | "1080p" | "4k";
+type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
+const QUALITIES: Record<QualityKey, QualityCfg> = {
+  "480p": { label: "480p", wShort: 480,  hShort: 854,  wLong: 854,  hLong: 480,  bitrate: 2_500_000, fps: 30 },
+  "720p": { label: "720p", wShort: 720,  hShort: 1280, wLong: 1280, hLong: 720,  bitrate: 5_000_000, fps: 30 },
+  "1080p":{ label: "1080p",wShort: 1080, hShort: 1920, wLong: 1920, hLong: 1080, bitrate: 9_000_000, fps: 60 },
+  "4k":   { label: "4k",   wShort: 2160, hShort: 3840, wLong: 3840, hLong: 2160, bitrate: 20_000_000, fps: 60 },
+};
 type SavePickerHandle = {
   queryPermission?: (d: { mode: "readwrite" }) => Promise<PermissionState>;
   requestPermission?: (d: { mode: "readwrite" }) => Promise<PermissionState>;
