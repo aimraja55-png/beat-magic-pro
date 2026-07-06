@@ -30,6 +30,14 @@ type Beats = {
   duration: number;
 };
 type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
+type QualityKey = "480p" | "720p" | "1080p" | "4k";
+type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
+const QUALITIES: Record<QualityKey, QualityCfg> = {
+  "480p": { label: "480p", wShort: 480,  hShort: 854,  wLong: 854,  hLong: 480,  bitrate: 2_500_000, fps: 30 },
+  "720p": { label: "720p", wShort: 720,  hShort: 1280, wLong: 1280, hLong: 720,  bitrate: 5_000_000, fps: 30 },
+  "1080p":{ label: "1080p",wShort: 1080, hShort: 1920, wLong: 1920, hLong: 1080, bitrate: 9_000_000, fps: 60 },
+  "4k":   { label: "4k",   wShort: 2160, hShort: 3840, wLong: 3840, hLong: 2160, bitrate: 20_000_000, fps: 60 },
+};
 type SavePickerHandle = {
   queryPermission?: (d: { mode: "readwrite" }) => Promise<PermissionState>;
   requestPermission?: (d: { mode: "readwrite" }) => Promise<PermissionState>;
@@ -265,7 +273,7 @@ function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<strin
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
-  ctx: CanvasRenderingContext2D, img: HTMLImageElement, W: number, H: number,
+  ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
   style: StylePack, progress: number, punch: number, flash: number, shimmer: number,
 ) {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
@@ -516,6 +524,11 @@ function Editor() {
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showLimitReached, setShowLimitReached] = useState(false);
   const [sessionOffset, setSessionOffsetState] = useState(0);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryTargetSlot, setGalleryTargetSlot] = useState<number | null>(null);
+  const [photoPool, setPhotoPool] = useState<File[]>([]);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [quality, setQuality] = useState<QualityKey>("1080p");
 
   const renderIdRef = useRef(0);
 
@@ -523,6 +536,9 @@ function Editor() {
   const filledCount = slots.filter(Boolean).length;
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
   const remainingToday = Math.max(0, dailyLimit() - usage);
+  const exactDurationSec = beats
+    ? (mode === "long" ? Math.min(LONG_MAX_SEC, beats.duration - sessionOffset) : beats.duration)
+    : 0;
 
   useEffect(() => {
     setPro(isPro());
@@ -608,12 +624,15 @@ function Editor() {
       if (!pro) setShowLimitReached(true);
       return;
     }
-    // Free ad gate
-    if (!pro) {
-      setStage("ad");
-      return;
-    }
-    await doRender();
+    // Show quality picker with exact duration; render begins after confirm
+    setQualityOpen(true);
+  }
+
+  function confirmQuality(q: QualityKey) {
+    setQuality(q);
+    setQualityOpen(false);
+    if (!pro) setStage("ad");
+    else void doRender();
   }
 
   async function doRender() {
@@ -628,16 +647,18 @@ function Editor() {
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
     setLog("रेंडर शुरू…");
 
-    // Adaptive quality: low-end devices → 720p@30 for stability
+    // Adaptive: user-chosen quality, downgraded on low-end devices to avoid Aw-Snap
     const nav = navigator as Navigator & { deviceMemory?: number };
     const cores = nav.hardwareConcurrency ?? 4;
     const mem = nav.deviceMemory ?? 4;
     const lowEnd = cores < 4 || mem < 4;
-    const highRes = aspect === "9:16" ? [1080, 1920] : [1920, 1080];
-    const lowRes = aspect === "9:16" ? [720, 1280] : [1280, 720];
-    const [W, H] = lowEnd ? lowRes : highRes;
-    const FPS = lowEnd ? 30 : 60;
-    const bitrate = lowEnd ? 5_000_000 : 9_000_000;
+    let cfg = QUALITIES[quality];
+    if (lowEnd && (quality === "1080p" || quality === "4k")) cfg = QUALITIES["720p"];
+    if (lowEnd && quality === "4k") cfg = QUALITIES["720p"];
+    const W = aspect === "9:16" ? cfg.wShort : cfg.wLong;
+    const H = aspect === "9:16" ? cfg.hShort : cfg.hLong;
+    const FPS = cfg.fps;
+    const bitrate = cfg.bitrate;
     const drawWM = !pro; // watermark for free users
 
     // Long-video: cap segment to 60s, resume from session offset
@@ -646,15 +667,31 @@ function Editor() {
       ? Math.min(LONG_MAX_SEC, beats.duration - startOffset)
       : beats.duration;
 
+    const imageUrls: string[] = [];
+    const bitmaps: ImageBitmap[] = [];
     try {
-      const imageUrls: string[] = [];
+      // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
+      // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
+      const targetMax = Math.max(W, H) * 1.25;
       const imgs = await Promise.all(
-        photos.map((f) => new Promise<HTMLImageElement>((res, rej) => {
-          const i = new Image();
-          const u = URL.createObjectURL(f);
-          imageUrls.push(u);
-          i.onload = () => res(i); i.onerror = rej; i.src = u;
-        })),
+        photos.map(async (f) => {
+          try {
+            const bmp = await createImageBitmap(f, {
+              resizeWidth: targetMax,
+              resizeQuality: "high",
+            } as ImageBitmapOptions);
+            bitmaps.push(bmp);
+            return bmp as unknown as CanvasImageSource & { width: number; height: number };
+          } catch {
+            // Fallback for browsers that reject resize option
+            return await new Promise<HTMLImageElement>((res, rej) => {
+              const i = new Image();
+              const u = URL.createObjectURL(f);
+              imageUrls.push(u);
+              i.onload = () => res(i); i.onerror = rej; i.src = u;
+            });
+          }
+        }),
       );
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
@@ -698,7 +735,8 @@ function Editor() {
         return (kSum / n) < 0.18 && (cSum / n) < 0.18;
       };
 
-      const seq: { img: HTMLImageElement; style: StylePack }[] = [];
+      type DrawImg = CanvasImageSource & { width: number; height: number };
+      const seq: { img: DrawImg; style: StylePack }[] = [];
       const recentStyles: StylePack[] = [];
       // Zero-repetition memory across renders for this same audio file
       const bannedStyles = new Set<string>(getUsedStyles(audioFile));
@@ -812,6 +850,7 @@ function Editor() {
       await ac.close();
       URL.revokeObjectURL(audioUrl);
       imageUrls.forEach((u) => URL.revokeObjectURL(u));
+      bitmaps.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
       if (renderIdRef.current !== myId) return;
 
       setPhase("encode");
@@ -921,7 +960,7 @@ function Editor() {
               <div className="grid grid-cols-4 gap-2">
                 {slots.map((f, i) => (
                   <SlotBox key={i} file={f} index={i} isNext={firstEmptyIndex() === i}
-                    onPick={(file) => fillSlot(i, file)}
+                    onOpenGallery={() => { setGalleryTargetSlot(i); setGalleryOpen(true); }}
                     onClear={() => clearSlot(i)} />
                 ))}
               </div>
@@ -984,6 +1023,9 @@ function Editor() {
               <p className="mt-1 text-xs text-white/55">पहले देखें, फिर SAVE / EXPORT दबाएँ.</p>
             </div>
             <video src={videoUrl} controls autoPlay muted={false} playsInline preload="auto"
+              controlsList="nodownload nofullscreen noremoteplayback"
+              disablePictureInPicture
+              onContextMenu={(e) => e.preventDefault()}
               className="w-full rounded-xl bg-black shadow-[0_24px_80px_-35px_rgba(255,46,136,0.75)]" />
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
@@ -1005,6 +1047,36 @@ function Editor() {
         {showLimitReached && !pro && (
           <LimitReachedModal onClose={() => setShowLimitReached(false)}
             onSubscribed={() => { activatePro(30); setPro(true); setShowLimitReached(false); }} />
+        )}
+
+        {galleryOpen && (
+          <GallerySheet
+            pool={photoPool}
+            slotsFilled={filledCount}
+            slotsTotal={slots.length}
+            onAddPhotos={(files) => setPhotoPool((p) => [...p, ...files])}
+            onPickPhoto={(f) => {
+              setSlots((prev) => {
+                const next = [...prev];
+                let target = galleryTargetSlot ?? next.findIndex((s) => s === null);
+                if (target < 0) return prev;
+                next[target] = f;
+                const nextEmpty = next.findIndex((s) => s === null);
+                setGalleryTargetSlot(nextEmpty >= 0 ? nextEmpty : null);
+                return next;
+              });
+            }}
+            onClose={() => { setGalleryOpen(false); setGalleryTargetSlot(null); }}
+          />
+        )}
+
+        {qualityOpen && beats && (
+          <QualityModal
+            durationSec={exactDurationSec}
+            current={quality}
+            onCancel={() => setQualityOpen(false)}
+            onConfirm={confirmQuality}
+          />
         )}
 
         <InstallButton />
@@ -1044,15 +1116,13 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
   );
 }
 
-function SlotBox({ file, index, isNext, onPick, onClear }: { file: File | null; index: number; isNext: boolean; onPick: (f: File) => void; onClear: () => void }) {
+function SlotBox({ file, index, isNext, onOpenGallery, onClear }: { file: File | null; index: number; isNext: boolean; onOpenGallery: () => void; onClear: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!file) { setUrl(null); return; }
     const u = URL.createObjectURL(file); setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [file]);
-  const openPicker = () => inputRef.current?.click();
   if (file && url) {
     return (
       <div className="group relative aspect-square overflow-hidden rounded-lg border-2 border-emerald-400/60 animate-scale-in">
@@ -1064,16 +1134,137 @@ function SlotBox({ file, index, isNext, onPick, onClear }: { file: File | null; 
     );
   }
   return (
-    <button type="button" onClick={openPicker}
+    <button type="button" onClick={onOpenGallery}
       className={`relative flex aspect-square items-center justify-center rounded-lg border-2 border-dashed text-white/60 transition active:scale-90 ${
         isNext ? "border-[#ff2e88] bg-[#ff2e88]/10 animate-pulse" : "border-white/20 bg-white/5 hover:border-white/40"
       }`}>
       <div className="text-[10px] font-bold tracking-widest">
         {isNext ? "◉ TAP" : `#${index + 1}`}
       </div>
-      <input ref={inputRef} type="file" accept="image/*" className="hidden"
-        onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onPick(f); e.currentTarget.value = ""; }} />
     </button>
+  );
+}
+
+function GallerySheet({ pool, slotsFilled, slotsTotal, onAddPhotos, onPickPhoto, onClose }: {
+  pool: File[]; slotsFilled: number; slotsTotal: number;
+  onAddPhotos: (files: File[]) => void; onPickPhoto: (f: File) => void; onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const created: Record<string, string> = {};
+    pool.forEach((f) => {
+      const key = `${f.name}-${f.size}-${f.lastModified}`;
+      if (!thumbs[key]) created[key] = URL.createObjectURL(f);
+    });
+    if (Object.keys(created).length) setThumbs((t) => ({ ...t, ...created }));
+    return () => {
+      // do not revoke here — the sheet may re-render often; revoke on unmount below
+    };
+     
+  }, [pool]);
+  useEffect(() => () => { Object.values(thumbs).forEach((u) => URL.revokeObjectURL(u)); }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/45 backdrop-blur-sm"
+         onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+        className="max-h-[62vh] rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-slate-900 to-slate-950 shadow-[0_-30px_80px_-20px_rgba(255,46,136,0.4)]"
+        style={{ animation: "slide-up 0.28s cubic-bezier(0.22,1,0.36,1)" }}>
+        <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-white/25" />
+        <div className="flex items-center justify-between px-5 pt-3">
+          <div>
+            <div className="text-sm font-black">📁 Photo Gallery</div>
+            <div className="text-[10px] text-white/60">{slotsFilled}/{slotsTotal} slots filled • ऊपर स्लॉट देखते रहें</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => inputRef.current?.click()}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-[11px] font-bold hover:bg-white/20">+ Add</button>
+            <button onClick={onClose}
+              className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70 hover:bg-white/20">✕</button>
+          </div>
+          <input ref={inputRef} type="file" accept="image/*" multiple className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.currentTarget.files ?? []).filter((f) => f.type.startsWith("image/"));
+              if (files.length) onAddPhotos(files);
+              e.currentTarget.value = "";
+            }} />
+        </div>
+        {pool.length === 0 ? (
+          <div className="p-6 pb-8 text-center">
+            <div className="text-4xl">🖼️</div>
+            <p className="mt-2 text-sm text-white/80">डिवाइस से फोटो चुनें</p>
+            <button onClick={() => inputRef.current?.click()}
+              className="mt-3 rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] px-5 py-2.5 text-sm font-black text-black">
+              Gallery से लोड करें
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-y-auto px-4 pb-6 pt-3" style={{ maxHeight: "50vh" }}>
+            <div className="grid grid-cols-4 gap-2">
+              {pool.map((f, i) => {
+                const key = `${f.name}-${f.size}-${f.lastModified}`;
+                const src = thumbs[key];
+                return (
+                  <button key={key + i} type="button" onClick={() => onPickPhoto(f)}
+                    className="group relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/40 transition active:scale-90 hover:border-[#ff2e88]">
+                    {src && <img src={src} alt="" loading="lazy" className="h-full w-full object-cover" />}
+                    <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <style>{`@keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
+      </div>
+    </div>
+  );
+}
+
+function QualityModal({ durationSec, current, onCancel, onConfirm }: {
+  durationSec: number; current: QualityKey; onCancel: () => void; onConfirm: (q: QualityKey) => void;
+}) {
+  const [pick, setPick] = useState<QualityKey>(current);
+  const secs = Math.max(1, Math.round(durationSec));
+  const mm = Math.floor(secs / 60), ss = secs % 60;
+  const dispDur = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
+  const opts: QualityKey[] = ["480p", "720p", "1080p", "4k"];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-2xl p-5" onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-3xl border border-[#ff2e88]/40 bg-gradient-to-br from-slate-900 to-slate-950 p-6 text-center shadow-[0_30px_100px_-20px_rgba(255,46,136,0.5)]">
+        <div className="text-[10px] uppercase tracking-[0.3em] text-white/50">Export Gateway</div>
+        <h2 className="mt-2 text-2xl font-black">Quality चुनें</h2>
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm">
+          <span className="text-white/60">Video Duration: </span>
+          <span className="font-black text-white">{dispDur}</span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {opts.map((k) => (
+            <button key={k} onClick={() => setPick(k)}
+              className={`rounded-xl border p-3 text-left transition ${
+                pick === k
+                  ? "border-[#ff2e88] bg-[#ff2e88]/15"
+                  : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+              }`}>
+              <div className="text-sm font-black uppercase">{k}</div>
+              <div className="text-[10px] text-white/50">
+                {k === "480p" && "Fast • Low RAM"}
+                {k === "720p" && "Balanced"}
+                {k === "1080p" && "HD • Trending"}
+                {k === "4k" && "Ultra • Long render"}
+              </div>
+            </button>
+          ))}
+        </div>
+        <button onClick={() => onConfirm(pick)}
+          className="mt-5 w-full rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] py-3 text-base font-black text-black active:scale-[0.98]">
+          Render शुरू करें ({pick.toUpperCase()})
+        </button>
+        <button onClick={onCancel}
+          className="mt-2 w-full text-[11px] text-white/50 hover:text-white/80">Cancel</button>
+      </div>
+    </div>
   );
 }
 
