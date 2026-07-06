@@ -735,7 +735,8 @@ function Editor() {
         return (kSum / n) < 0.18 && (cSum / n) < 0.18;
       };
 
-      const seq: { img: HTMLImageElement; style: StylePack }[] = [];
+      type DrawImg = CanvasImageSource & { width: number; height: number };
+      const seq: { img: DrawImg; style: StylePack }[] = [];
       const recentStyles: StylePack[] = [];
       // Zero-repetition memory across renders for this same audio file
       const bannedStyles = new Set<string>(getUsedStyles(audioFile));
