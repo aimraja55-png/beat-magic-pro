@@ -624,12 +624,15 @@ function Editor() {
       if (!pro) setShowLimitReached(true);
       return;
     }
-    // Free ad gate
-    if (!pro) {
-      setStage("ad");
-      return;
-    }
-    await doRender();
+    // Show quality picker with exact duration; render begins after confirm
+    setQualityOpen(true);
+  }
+
+  function confirmQuality(q: QualityKey) {
+    setQuality(q);
+    setQualityOpen(false);
+    if (!pro) setStage("ad");
+    else void doRender();
   }
 
   async function doRender() {
