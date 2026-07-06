@@ -1120,15 +1120,13 @@ function BigAudioButton({ onPick, loading }: { onPick: (f: File) => void; loadin
   );
 }
 
-function SlotBox({ file, index, isNext, onPick, onClear }: { file: File | null; index: number; isNext: boolean; onPick: (f: File) => void; onClear: () => void }) {
+function SlotBox({ file, index, isNext, onOpenGallery, onClear }: { file: File | null; index: number; isNext: boolean; onOpenGallery: () => void; onClear: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!file) { setUrl(null); return; }
     const u = URL.createObjectURL(file); setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [file]);
-  const openPicker = () => inputRef.current?.click();
   if (file && url) {
     return (
       <div className="group relative aspect-square overflow-hidden rounded-lg border-2 border-emerald-400/60 animate-scale-in">
@@ -1140,16 +1138,137 @@ function SlotBox({ file, index, isNext, onPick, onClear }: { file: File | null; 
     );
   }
   return (
-    <button type="button" onClick={openPicker}
+    <button type="button" onClick={onOpenGallery}
       className={`relative flex aspect-square items-center justify-center rounded-lg border-2 border-dashed text-white/60 transition active:scale-90 ${
         isNext ? "border-[#ff2e88] bg-[#ff2e88]/10 animate-pulse" : "border-white/20 bg-white/5 hover:border-white/40"
       }`}>
       <div className="text-[10px] font-bold tracking-widest">
         {isNext ? "◉ TAP" : `#${index + 1}`}
       </div>
-      <input ref={inputRef} type="file" accept="image/*" className="hidden"
-        onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onPick(f); e.currentTarget.value = ""; }} />
     </button>
+  );
+}
+
+function GallerySheet({ pool, slotsFilled, slotsTotal, onAddPhotos, onPickPhoto, onClose }: {
+  pool: File[]; slotsFilled: number; slotsTotal: number;
+  onAddPhotos: (files: File[]) => void; onPickPhoto: (f: File) => void; onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const created: Record<string, string> = {};
+    pool.forEach((f) => {
+      const key = `${f.name}-${f.size}-${f.lastModified}`;
+      if (!thumbs[key]) created[key] = URL.createObjectURL(f);
+    });
+    if (Object.keys(created).length) setThumbs((t) => ({ ...t, ...created }));
+    return () => {
+      // do not revoke here — the sheet may re-render often; revoke on unmount below
+    };
+     
+  }, [pool]);
+  useEffect(() => () => { Object.values(thumbs).forEach((u) => URL.revokeObjectURL(u)); }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/45 backdrop-blur-sm"
+         onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+        className="max-h-[62vh] rounded-t-3xl border-t border-white/10 bg-gradient-to-b from-slate-900 to-slate-950 shadow-[0_-30px_80px_-20px_rgba(255,46,136,0.4)]"
+        style={{ animation: "slide-up 0.28s cubic-bezier(0.22,1,0.36,1)" }}>
+        <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-white/25" />
+        <div className="flex items-center justify-between px-5 pt-3">
+          <div>
+            <div className="text-sm font-black">📁 Photo Gallery</div>
+            <div className="text-[10px] text-white/60">{slotsFilled}/{slotsTotal} slots filled • ऊपर स्लॉट देखते रहें</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => inputRef.current?.click()}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-[11px] font-bold hover:bg-white/20">+ Add</button>
+            <button onClick={onClose}
+              className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70 hover:bg-white/20">✕</button>
+          </div>
+          <input ref={inputRef} type="file" accept="image/*" multiple className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.currentTarget.files ?? []).filter((f) => f.type.startsWith("image/"));
+              if (files.length) onAddPhotos(files);
+              e.currentTarget.value = "";
+            }} />
+        </div>
+        {pool.length === 0 ? (
+          <div className="p-6 pb-8 text-center">
+            <div className="text-4xl">🖼️</div>
+            <p className="mt-2 text-sm text-white/80">डिवाइस से फोटो चुनें</p>
+            <button onClick={() => inputRef.current?.click()}
+              className="mt-3 rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] px-5 py-2.5 text-sm font-black text-black">
+              Gallery से लोड करें
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-y-auto px-4 pb-6 pt-3" style={{ maxHeight: "50vh" }}>
+            <div className="grid grid-cols-4 gap-2">
+              {pool.map((f, i) => {
+                const key = `${f.name}-${f.size}-${f.lastModified}`;
+                const src = thumbs[key];
+                return (
+                  <button key={key + i} type="button" onClick={() => onPickPhoto(f)}
+                    className="group relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/40 transition active:scale-90 hover:border-[#ff2e88]">
+                    {src && <img src={src} alt="" loading="lazy" className="h-full w-full object-cover" />}
+                    <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <style>{`@keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
+      </div>
+    </div>
+  );
+}
+
+function QualityModal({ durationSec, current, onCancel, onConfirm }: {
+  durationSec: number; current: QualityKey; onCancel: () => void; onConfirm: (q: QualityKey) => void;
+}) {
+  const [pick, setPick] = useState<QualityKey>(current);
+  const secs = Math.max(1, Math.round(durationSec));
+  const mm = Math.floor(secs / 60), ss = secs % 60;
+  const dispDur = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
+  const opts: QualityKey[] = ["480p", "720p", "1080p", "4k"];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-2xl p-5" onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-3xl border border-[#ff2e88]/40 bg-gradient-to-br from-slate-900 to-slate-950 p-6 text-center shadow-[0_30px_100px_-20px_rgba(255,46,136,0.5)]">
+        <div className="text-[10px] uppercase tracking-[0.3em] text-white/50">Export Gateway</div>
+        <h2 className="mt-2 text-2xl font-black">Quality चुनें</h2>
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm">
+          <span className="text-white/60">Video Duration: </span>
+          <span className="font-black text-white">{dispDur}</span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {opts.map((k) => (
+            <button key={k} onClick={() => setPick(k)}
+              className={`rounded-xl border p-3 text-left transition ${
+                pick === k
+                  ? "border-[#ff2e88] bg-[#ff2e88]/15"
+                  : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+              }`}>
+              <div className="text-sm font-black uppercase">{k}</div>
+              <div className="text-[10px] text-white/50">
+                {k === "480p" && "Fast • Low RAM"}
+                {k === "720p" && "Balanced"}
+                {k === "1080p" && "HD • Trending"}
+                {k === "4k" && "Ultra • Long render"}
+              </div>
+            </button>
+          ))}
+        </div>
+        <button onClick={() => onConfirm(pick)}
+          className="mt-5 w-full rounded-xl bg-gradient-to-r from-[#ff2e88] to-[#ffb347] py-3 text-base font-black text-black active:scale-[0.98]">
+          Render शुरू करें ({pick.toUpperCase()})
+        </button>
+        <button onClick={onCancel}
+          className="mt-2 w-full text-[11px] text-white/50 hover:text-white/80">Cancel</button>
+      </div>
+    </div>
   );
 }
 
