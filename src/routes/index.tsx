@@ -1056,18 +1056,14 @@ function Editor() {
             slotsTotal={slots.length}
             onAddPhotos={(files) => setPhotoPool((p) => [...p, ...files])}
             onPickPhoto={(f) => {
-              if (galleryTargetSlot != null) fillSlot(galleryTargetSlot, f);
-              else {
-                const idx = slots.findIndex((s) => s === null);
-                if (idx >= 0) fillSlot(idx, f);
-              }
-              // Advance target to next empty slot for continuous fill-view feedback
               setSlots((prev) => {
                 const next = [...prev];
-                if (galleryTargetSlot != null) next[galleryTargetSlot] = next[galleryTargetSlot] ?? f;
+                let target = galleryTargetSlot ?? next.findIndex((s) => s === null);
+                if (target < 0) return prev;
+                next[target] = f;
                 const nextEmpty = next.findIndex((s) => s === null);
                 setGalleryTargetSlot(nextEmpty >= 0 ? nextEmpty : null);
-                return prev; // fillSlot already applied change; return prev to avoid override
+                return next;
               });
             }}
             onClose={() => { setGalleryOpen(false); setGalleryTargetSlot(null); }}
