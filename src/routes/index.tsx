@@ -960,7 +960,7 @@ function Editor() {
               <div className="grid grid-cols-4 gap-2">
                 {slots.map((f, i) => (
                   <SlotBox key={i} file={f} index={i} isNext={firstEmptyIndex() === i}
-                    onPick={(file) => fillSlot(i, file)}
+                    onOpenGallery={() => { setGalleryTargetSlot(i); setGalleryOpen(true); }}
                     onClear={() => clearSlot(i)} />
                 ))}
               </div>
