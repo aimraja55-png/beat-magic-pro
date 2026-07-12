@@ -231,10 +231,9 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type StylePack = {
-  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan" | "layerPeel3D" | "liquidWarp" | "photoMerge";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn" | "liquidIn" | "shatterIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "liquidOut" | "none";
-  filter: "none" | "warm" | "cool" | "noir" | "sepia" | "tealOrange" | "bleach" | "neon" | "vhs";
+  base: "punchIn" | "punchOut" | "whipPan" | "dolly" | "parallax3D" | "smoothPan";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "zoomIn" | "glitchIn" | "shatterIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "zoomOut" | "none";
   panX: number; panY: number; rotDir: number; seed: number;
 };
 function mulberry32(a: number) {
@@ -254,7 +253,6 @@ function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<strin
   const bases = allBases;
   const entries = allEntries;
   const exits = allExits;
-  const filters = ["none"] as const;
   const recentBases = new Set(recent.slice(-4).map(s => s.base));
   const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
   const recentExits = new Set(recent.slice(-4).map(s => s.exit));
@@ -272,19 +270,9 @@ const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
-  style: StylePack, progress: number, punch: number, flash: number, shimmer: number,
+  style: StylePack, progress: number, punch: number,
 ) {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-  let filter = "";
-  if (style.filter === "warm") filter = "saturate(1.15) hue-rotate(-10deg) contrast(1.08)";
-  else if (style.filter === "cool") filter = "saturate(1.1) hue-rotate(12deg) contrast(1.05)";
-  else if (style.filter === "noir") filter = "grayscale(0.85) contrast(1.25) brightness(0.95)";
-  else if (style.filter === "sepia") filter = "sepia(0.55) contrast(1.1)";
-  else if (style.filter === "tealOrange") filter = "saturate(1.25) hue-rotate(-6deg) contrast(1.15)";
-  else if (style.filter === "bleach") filter = "saturate(0.55) contrast(1.25) brightness(1.05)";
-  else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
-  else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
-
   const baseScale = Math.min(W / img.width, H / img.height);
   let scale = baseScale; let dx = 0, dy = 0;
   const eased = EASE(progress);
@@ -307,7 +295,7 @@ function drawFrame(
   }
   if (punch > 0.55 && style.base !== "smoothPan") {
     const amp = 14 * (punch - 0.5);
-    dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
+    dx += Math.sign(style.panX) * amp; dy += Math.sign(style.panY) * amp;
   }
   let entryAlpha = 1;
   if (progress < 0.25) {
@@ -318,11 +306,11 @@ function drawFrame(
       case "slideU": dy -= H * 0.6 * inv; break;
       case "slideD": dy += H * 0.6 * inv; break;
       case "zoomIn": scale *= 0.6 + 0.4 * EASE(p); break;
-      case "glitchIn": dx += (Math.random() - 0.5) * 32 * inv; dy += (Math.random() - 0.5) * 12 * inv; break;
+      case "glitchIn": dx += Math.sign(style.panX) * 32 * inv; dy += Math.sign(style.panY) * 12 * inv; break;
       case "shatterIn": {
         const jitter = inv * 40;
-        dx += (Math.sin(style.seed) * 0.5) * jitter;
-        dy += (Math.cos(style.seed * 1.3) * 0.5) * jitter;
+        dx += Math.sign(style.panX) * jitter;
+        dy += Math.sign(style.panY) * jitter;
         break;
       }
     }
@@ -340,13 +328,10 @@ function drawFrame(
   }
   const dw = img.width * scale; const dh = img.height * scale;
   ctx.save();
-  ctx.filter = filter || "none";
   ctx.globalAlpha = entryAlpha;
   ctx.translate(W / 2 + dx, H / 2 + dy);
-  if (rot) ctx.rotate(rot);
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
-  ctx.filter = "none";
   ctx.globalAlpha = 1;
 }
 
@@ -738,7 +723,7 @@ function Editor() {
         const flash = beats.clapEnv[envIdx] ?? 0;
         const shimmer = beats.hatEnv[envIdx] ?? 0;
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch);
         if (drawWM) drawWatermark(ctx, W, H);
         setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
         raf = requestAnimationFrame(render);
