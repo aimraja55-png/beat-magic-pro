@@ -531,8 +531,7 @@ function Editor() {
     try {
       // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
       // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
-      setLog("Photos को प्रोसेस किया जा रहा है…");
-      setProgress(0.08);
+      setLog("Photo syncing जारी है…");
       await waitForNextPaint();
 
       const targetMax = Math.max(W, H) * 1.1;
@@ -542,7 +541,7 @@ function Editor() {
         const f = photos[idx];
         setSyncCount(idx + 1);
         setLog(`Photo सिंक किया जा रहा है… (${idx + 1}/${photos.length})`);
-        setProgress(0.01 + ((idx + 1) / photos.length) * 0.14);
+        setProgress((idx + 1) / photos.length);
         await waitForNextPaint();
         try {
           const bmp = await createImageBitmap(f, {
@@ -564,6 +563,12 @@ function Editor() {
           imgs.push(img as unknown as CanvasImageSource & { width: number; height: number });
         }
       }
+
+      setStage("rendering");
+      setPhase("record");
+      setProgress(0.01);
+      setLog("Sync complete — rendering शुरू हो रहा है…");
+      await waitForNextPaint();
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
