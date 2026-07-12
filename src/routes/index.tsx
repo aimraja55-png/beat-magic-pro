@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
-import { Progress } from "@/components/ui/progress";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -30,7 +29,7 @@ type Beats = {
   bpm: number;
   duration: number;
 };
-type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
+type Stage = "idle" | "analyzing" | "ready" | "syncing" | "ad" | "rendering" | "done";
 type QualityKey = "480p" | "720p" | "1080p" | "4k";
 type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
 const QUALITIES: Record<QualityKey, QualityCfg> = {
@@ -286,7 +285,7 @@ function drawFrame(
   else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
   else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
 
-  const baseScale = Math.max(W / img.width, H / img.height);
+  const baseScale = Math.min(W / img.width, H / img.height);
   let scale = baseScale; let dx = 0, dy = 0, rot = 0;
   const eased = EASE(progress);
 
@@ -428,7 +427,9 @@ function Editor() {
   const [slots, setSlots] = useState<(File | null)[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState<"record" | "encode" | "">("");
+  const [phase, setPhase] = useState<"sync" | "record" | "encode" | "">("");
+  const [syncCount, setSyncCount] = useState(0);
+  const [syncTotal, setSyncTotal] = useState(0);
   const [log, setLog] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
@@ -517,14 +518,8 @@ function Editor() {
     const ext = videoMime.includes("webm") ? "webm" : "mp4";
     const filename = `raja-ai-video.${ext}`;
     try {
-      const handle = await requestOutputFileHandle(filename, videoMime, ext);
-      if (handle) {
-        await saveWithFileHandle(handle, videoBlob);
-        setLog("✓ Export complete — file saved.");
-      } else {
-        autoDownload(videoUrl, filename);
-        setLog("✓ Export started. देखें अपने Downloads में।");
-      }
+      autoDownload(videoUrl, filename);
+      setLog("✓ Export started — देखें अपने Downloads में।");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       setLog(`Export error: ${msg}`);
@@ -551,17 +546,33 @@ function Editor() {
     void doRender();
   }
 
+  async function doReEdit() {
+    if (!audioFile || !beats || filledCount === 0) return;
+    setStage("syncing");
+    setPhase("sync");
+    setProgress(0.01);
+    setSyncCount(0);
+    setSyncTotal(filledCount);
+    setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
+    setLog("Re-editing started — Photo sync and sharper cuts तैयार हो रहे हैं…");
+    await waitForNextPaint();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await doRender();
+  }
+
   async function doRender() {
     if (!audioFile || !beats) return;
     const photos = slots.filter(Boolean) as File[];
     if (photos.length === 0) return;
 
     const myId = ++renderIdRef.current;
-    setStage("rendering");
+    setStage("syncing");
+    setPhase("sync");
     setProgress(0.01);
-    setPhase("record");
+    setSyncCount(0);
+    setSyncTotal(photos.length);
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
-    setLog("1% — तेज़ रेंडरिंग स्टार्ट हो रही है…");
+    setLog(`Photo syncing 0/${photos.length}…`);
     await waitForNextPaint();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -597,11 +608,11 @@ function Editor() {
       const targetMax = Math.max(W, H) * 1.1;
       const resizeQuality = W >= 2160 ? "medium" : "high";
       const imgs: Array<CanvasImageSource & { width: number; height: number }> = [];
-      setProgress(0.08);
       for (let idx = 0; idx < photos.length; idx++) {
         const f = photos[idx];
-        setLog(`Photos को प्रीप्रोसेस किया जा रहा है… (${idx + 1}/${photos.length})`);
-        setProgress(0.08 + ((idx + 1) / photos.length) * 0.08);
+        setSyncCount(idx + 1);
+        setLog(`Photo सिंक किया जा रहा है… (${idx + 1}/${photos.length})`);
+        setProgress(0.01 + ((idx + 1) / photos.length) * 0.14);
         await waitForNextPaint();
         try {
           const bmp = await createImageBitmap(f, {
@@ -680,9 +691,9 @@ function Editor() {
         // Force smoothPan + fadeIn/fadeOut in calm passages
         const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
         if (isCalmAt(segMid)) {
-          const calmBases = ["smoothPan","kenburns","liquidWarp","parallax3D"] as const;
-          const calmEntries = ["fadeIn","liquidIn","blurIn"] as const;
-          const calmExits = ["fadeOut","liquidOut","blurOut"] as const;
+          const calmBases = ["smoothPan","kenburns","parallax3D","dolly"] as const;
+          const calmEntries = ["slideL","slideR","slideU","slideD","zoomIn"] as const;
+          const calmExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
           const r = mulberry32(seed);
           style = {
             ...style,
@@ -728,7 +739,9 @@ function Editor() {
         audioEl.oncanplay = done;
         audioEl.onerror = fail;
       });
-      setLog("Audio तैयार हो गया — render जल्दी शुरू हो रहा है…");
+      setStage("rendering");
+      setPhase("record");
+      setLog("Audio तैयार — sharp rendering शुरू हो रहा है…");
       setProgress(0.18);
       await waitForNextPaint();
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -967,8 +980,8 @@ function Editor() {
 
         {/* Immediate render start; ad delay removed for faster UX */}
 
-        {stage === "rendering" && (
-          <RenderingOverlay progress={progress} phase={phase} log={log} />
+        {(stage === "rendering" || stage === "syncing") && (
+          <RenderingOverlay stage={stage} progress={progress} phase={phase} log={log} syncCount={syncCount} syncTotal={syncTotal} />
         )}
 
         {stage === "done" && videoUrl && (
@@ -976,7 +989,7 @@ function Editor() {
             <div className="mb-4 text-center">
               <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/50">Preview Ready</div>
               <h2 className="mt-2 text-2xl font-black">Video Preview</h2>
-              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर Export दबाएँ.</p>
+              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर Export या Re-edit करें.</p>
             </div>
             <video src={videoUrl} controls autoPlay muted={false} playsInline preload="auto"
               controlsList="nodownload nofullscreen noremoteplayback"
@@ -987,6 +1000,11 @@ function Editor() {
               onClick={() => void exportPreviewVideo()}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
               {exporting ? "Exporting…" : "Export"}
+            </button>
+            <button type="button" disabled={stage === "rendering"}
+              onClick={() => void doReEdit()}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 py-4 text-base font-black text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
+              Improve / Re-edit
             </button>
             <button onClick={() => { setStage("ready"); setVideoUrl(null); setVideoBlob(null); setProgress(0); }}
               className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10">
@@ -1335,14 +1353,21 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
   );
 }
 
-function RenderingOverlay({ progress, phase, log }: { progress: number; phase: "record" | "encode" | ""; log: string }) {
+function RenderingOverlay({ stage, progress, phase, log, syncCount, syncTotal }: { stage: Stage; progress: number; phase: "sync" | "record" | "encode" | ""; log: string; syncCount: number; syncTotal: number; }) {
   const pct = Math.max(1, Math.min(100, Math.round(progress * 100)));
+  const isSync = stage === "syncing";
+  const title = isSync ? "Photo Syncing" : phase === "encode" ? "Exporting" : "Rendering";
+  const subtitle = isSync ? `Photos ${syncCount}/${syncTotal}` : phase === "encode" ? "Finalizing file" : "Sharp beat-sync action";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4">
       <div className="w-full max-w-md rounded-[28px] border border-white/15 bg-white/5 p-6 text-center shadow-[0_24px_120px_-48px_rgba(59,130,246,0.4)] backdrop-blur-xl">
-        <div className="text-xs font-black uppercase tracking-[0.4em] text-sky-100/70">PREMIUM RENDER</div>
-        <div className="mt-4 text-3xl font-black tracking-tight text-white">{phase === "encode" ? "Exporting" : "Rendering"}</div>
-        <div className="mt-2 text-sm uppercase tracking-[0.3em] text-slate-300">{phase === "encode" ? "Finalizing file" : "Sharp beat-sync action"}</div>
+        <div className="flex items-center justify-center gap-3">
+          <Spinner size={36} />
+          <div className="text-xs font-black uppercase tracking-[0.4em] text-sky-100/70">PREMIUM RENDER</div>
+        </div>
+        <div className="mt-4 text-3xl font-black tracking-tight text-white">{title}</div>
+        <div className="mt-2 text-sm uppercase tracking-[0.3em] text-slate-300">{subtitle}</div>
         <div className="mt-6">
           <RenderingProgress value={pct} />
         </div>
