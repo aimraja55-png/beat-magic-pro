@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
+import { Progress } from "@/components/ui/progress";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -603,10 +604,10 @@ function Editor() {
       const handle = await requestOutputFileHandle(filename, videoMime, ext);
       if (handle) {
         await saveWithFileHandle(handle, videoBlob);
-        setLog("✓ वीडियो सेव हो गया!");
+        setLog("✓ Export complete — file saved.");
       } else {
         autoDownload(videoUrl, filename);
-        setLog("✓ डाउनलोड शुरू हो गया!");
+        setLog("✓ Export started. देखें अपने Downloads में।");
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -631,8 +632,7 @@ function Editor() {
   function confirmQuality(q: QualityKey) {
     setQuality(q);
     setQualityOpen(false);
-    if (!pro) setStage("ad");
-    else void doRender();
+    void doRender();
   }
 
   async function doRender() {
@@ -642,10 +642,12 @@ function Editor() {
 
     const myId = ++renderIdRef.current;
     setStage("rendering");
-    setProgress(0);
+    setProgress(0.04);
     setPhase("record");
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
-    setLog("रेंडर शुरू…");
+    setLog("रेंडरिंग आरंभ हो रही है…");
+    await waitForNextPaint();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Adaptive: user-chosen quality, downgraded on low-end devices to avoid Aw-Snap
     const nav = navigator as Navigator & { deviceMemory?: number };
@@ -672,27 +674,38 @@ function Editor() {
     try {
       // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
       // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
-      const targetMax = Math.max(W, H) * 1.25;
-      const imgs = await Promise.all(
-        photos.map(async (f) => {
-          try {
-            const bmp = await createImageBitmap(f, {
-              resizeWidth: targetMax,
-              resizeQuality: "high",
-            } as ImageBitmapOptions);
-            bitmaps.push(bmp);
-            return bmp as unknown as CanvasImageSource & { width: number; height: number };
-          } catch {
-            // Fallback for browsers that reject resize option
-            return await new Promise<HTMLImageElement>((res, rej) => {
-              const i = new Image();
-              const u = URL.createObjectURL(f);
-              imageUrls.push(u);
-              i.onload = () => res(i); i.onerror = rej; i.src = u;
-            });
-          }
-        }),
-      );
+      setLog("Photos को प्रोसेस किया जा रहा है…");
+      setProgress(0.08);
+      await waitForNextPaint();
+
+      const targetMax = Math.max(W, H) * 1.1;
+      const resizeQuality = W >= 2160 ? "medium" : "high";
+      const imgs: Array<CanvasImageSource & { width: number; height: number }> = [];
+      for (let idx = 0; idx < photos.length; idx++) {
+        const f = photos[idx];
+        setLog(`Photos को प्रीप्रोसेस किया जा रहा है… (${idx + 1}/${photos.length})`);
+        setProgress(0.08 + (idx / photos.length) * 0.08);
+        await waitForNextPaint();
+        try {
+          const bmp = await createImageBitmap(f, {
+            resizeWidth: targetMax,
+            resizeHeight: targetMax,
+            resizeQuality: resizeQuality as ImageBitmapResizeQuality,
+          } as ImageBitmapOptions);
+          bitmaps.push(bmp);
+          imgs.push(bmp as unknown as CanvasImageSource & { width: number; height: number });
+        } catch {
+          const img = await new Promise<HTMLImageElement>((res, rej) => {
+            const i = new Image();
+            const u = URL.createObjectURL(f);
+            imageUrls.push(u);
+            i.onload = () => res(i);
+            i.onerror = rej;
+            i.src = u;
+          });
+          imgs.push(img as unknown as CanvasImageSource & { width: number; height: number });
+        }
+      }
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
@@ -773,10 +786,31 @@ function Editor() {
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext("2d")!;
 
+      setLog("Audio स्ट्रीम तैयार हो रही है…");
+      setProgress(0.18);
+      await waitForNextPaint();
+
       const audioUrl = URL.createObjectURL(audioFile);
       const audioEl = new Audio(audioUrl);
+      audioEl.preload = "auto";
       audioEl.crossOrigin = "anonymous";
-      await new Promise((r) => (audioEl.oncanplaythrough = r));
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return; settled = true; cleanup(); resolve();
+        };
+        const fail = () => {
+          if (settled) return; settled = true; cleanup(); reject(new Error("Audio load failed"));
+        };
+        const cleanup = () => {
+          audioEl.onloadeddata = null;
+          audioEl.oncanplay = null;
+          audioEl.onerror = null;
+        };
+        audioEl.onloadeddata = done;
+        audioEl.oncanplay = done;
+        audioEl.onerror = fail;
+      });
 
       const ac = new AudioContext();
       const src = ac.createMediaElementSource(audioEl);
@@ -797,6 +831,10 @@ function Editor() {
       rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
       const outMime = isMp4 ? "video/mp4" : "video/webm";
       const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: outMime }))));
+
+      setLog("Recording और Beat-sync शुरू हो रहा है…");
+      setProgress(0.26);
+      await waitForNextPaint();
 
       const recordStart = performance.now();
       rec.start(250);
@@ -871,7 +909,7 @@ function Editor() {
       setVideoBlob(out); setVideoUrl(url); setVideoMime(outMime);
       setProgress(1); setPhase("");
       setStage("done"); setCelebrate(true);
-      setLog("✓ Preview तैयार है — SAVE दबाने पर ही डाउनलोड होगा.");
+      setLog("✓ Preview तैयार है — Export बटन दबाएँ।");
 
       // Update usage + persistent session
       bumpUsage(); setUsage(getUsageToday());
@@ -1006,10 +1044,7 @@ function Editor() {
           </div>
         )}
 
-        {stage === "ad" && (
-          <AdCountdown seconds={AD_SECONDS} onComplete={() => void doRender()}
-            onSkip={pro ? () => void doRender() : undefined} />
-        )}
+        {/* Immediate render start; ad delay removed for faster UX */}
 
         {stage === "rendering" && (
           <RenderingOverlay progress={progress} phase={phase} log={log} />
@@ -1020,7 +1055,7 @@ function Editor() {
             <div className="mb-4 text-center">
               <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/50">Preview Ready</div>
               <h2 className="mt-2 text-2xl font-black">Video Preview</h2>
-              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर SAVE / EXPORT दबाएँ.</p>
+              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर Export दबाएँ.</p>
             </div>
             <video src={videoUrl} controls autoPlay muted={false} playsInline preload="auto"
               controlsList="nodownload nofullscreen noremoteplayback"
@@ -1030,7 +1065,7 @@ function Editor() {
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
-              {exporting ? "SAVING…" : "SAVE / EXPORT"}
+              {exporting ? "Exporting…" : "Export"}
             </button>
             <button onClick={() => { setStage("ready"); setVideoUrl(null); setVideoBlob(null); setProgress(0); }}
               className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10">
@@ -1382,14 +1417,18 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
 function RenderingOverlay({ progress, phase, log }: { progress: number; phase: "record" | "encode" | ""; log: string }) {
   const pct = Math.round(progress * 100);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-2xl">
-      <div className="flex flex-col items-center">
-        <CircularSpinner percent={pct} />
-        <div className="mt-6 text-2xl font-black tracking-widest">प्रोसेसिंग…</div>
-        <div className="mt-2 text-xs uppercase tracking-[0.3em] text-white/60">
-          {phase === "encode" ? "Finalizing" : "Rendering Beats"}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-2xl px-4">
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950/95 p-6 text-center shadow-xl">
+        <div className="text-sm font-black uppercase tracking-[0.35em] text-white/60">Processing</div>
+        <div className="mt-4 text-3xl font-black tracking-tight text-white">{phase === "encode" ? "Exporting" : "Rendering"}</div>
+        <div className="mt-4 text-xs uppercase tracking-[0.3em] text-white/50">
+          {phase === "encode" ? "Finalizing file" : "Beat-synced render"}
         </div>
-        {log && <div className="mt-3 max-w-xs text-center text-[11px] text-white/50">{log}</div>}
+        <div className="mt-6">
+          <Progress value={Math.min(100, Math.max(0, pct))} />
+        </div>
+        <div className="mt-3 text-base font-black text-white">{pct}%</div>
+        {log && <div className="mt-3 max-w-[22rem] text-center text-[11px] text-white/50">{log}</div>}
       </div>
     </div>
   );
