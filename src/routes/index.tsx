@@ -249,15 +249,13 @@ function mulberry32(a: number) {
 function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const allBases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan","layerPeel3D","liquidWarp","photoMerge"] as const;
-  const allEntries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn","liquidIn","shatterIn"] as const;
-  const allExits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","liquidOut","none"] as const;
-  const calmBases = ["kenburns","smoothPan","parallax3D","dolly","orbit","liquidWarp"] as const;
-  const wildBases = ["punchIn","punchOut","tiltShake","whipPan","handheld","spiralZoom","dutchAngle","layerPeel3D","photoMerge"] as const;
-  const bases = intensity === "chill" ? calmBases : intensity === "aggressive" ? wildBases : allBases;
+  const allBases = ["punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","spiralZoom","dutchAngle"] as const;
+  const allEntries = ["slideL","slideR","slideU","slideD","zoomIn","spinIn","glitchIn","shatterIn"] as const;
+  const allExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
+  const bases = allBases;
   const entries = allEntries;
   const exits = allExits;
-  const filters = ["none","none","warm","cool","noir","sepia","tealOrange","bleach","neon","vhs"] as const;
+  const filters = ["none","none","cool","warm"] as const;
   const recentBases = new Set(recent.slice(-4).map(s => s.base));
   const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
   const recentExits = new Set(recent.slice(-4).map(s => s.exit));
@@ -376,17 +374,8 @@ function drawFrame(
       case "zoomIn": scale *= 0.6 + 0.4 * EASE(p); break;
       case "spinIn": rot += inv * 0.8 * style.rotDir; scale *= 0.6 + 0.4 * EASE(p); break;
       case "irisIn": break;
-      case "blurIn": filter = (filter + ` blur(${inv * 14}px)`).trim(); break;
       case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
-      case "chromaIn": filter = (filter + ` saturate(${1 + inv * 0.8})`).trim(); break;
-      case "fadeIn": /* alpha handled above */ break;
-      case "liquidIn": {
-        // Liquid ripple = strong blur decaying + slight vertical wobble
-        filter = (filter + ` blur(${inv * 18}px) saturate(${1 + inv * 0.6})`).trim();
-        dy += Math.sin(progress * Math.PI * 6) * 12 * inv; break;
-      }
       case "shatterIn": {
-        // Random offset that snaps into place (glass shatter re-assembling)
         const jitter = inv * 60;
         dx += (Math.sin(style.seed) * 0.5 + 0.5 - 0.5) * jitter;
         dy += (Math.cos(style.seed * 1.3) * 0.5 + 0.5 - 0.5) * jitter;
@@ -402,92 +391,19 @@ function drawFrame(
       case "slideU": dy -= H * 0.5 * e; break;
       case "slideD": dy += H * 0.5 * e; break;
       case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
-      case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
-      case "irisOut": break;
-      case "fadeOut": entryAlpha *= 1 - e * 0.75; break;
-      case "liquidOut": {
-        filter = (filter + ` blur(${e * 16}px) saturate(${1 + e * 0.6})`).trim();
-        dy += Math.sin(progress * Math.PI * 6) * 14 * e; entryAlpha *= 1 - e * 0.4; break;
-      }
+      case "none": break;
     }
   }
   const dw = img.width * scale; const dh = img.height * scale;
-  const needIris = (style.entry === "irisIn" && progress < 0.25) || (style.exit === "irisOut" && progress > 0.8);
   ctx.save();
-  if (needIris) {
-    let r: number;
-    if (style.entry === "irisIn" && progress < 0.25) {
-      const p = progress / 0.25; r = EASE(p) * Math.hypot(W, H) * 0.7;
-    } else {
-      const p = (progress - 0.8) / 0.2; r = (1 - EASE(p)) * Math.hypot(W, H) * 0.7;
-    }
-    ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.max(1, r), 0, Math.PI * 2); ctx.clip();
-  }
   ctx.filter = filter || "none";
   ctx.globalAlpha = entryAlpha;
-  const trails = Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
-  for (let k = trails; k >= 1; k--) {
-    const f = k / trails;
-    ctx.globalAlpha = entryAlpha * (0.14 + 0.15 * (1 - f));
-    ctx.save();
-    ctx.translate(W / 2 + dx * (1 - f * 0.4), H / 2 + dy * (1 - f * 0.4));
-    if (rot) ctx.rotate(rot * (1 - f * 0.3));
-    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
-    ctx.restore();
-  }
-  ctx.globalAlpha = entryAlpha;
-  ctx.save();
   ctx.translate(W / 2 + dx, H / 2 + dy);
   if (rot) ctx.rotate(rot);
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
-  ctx.filter = "none"; ctx.globalAlpha = 1;
-  if (shimmer > 0.25) {
-    ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.35 * shimmer;
-    const s = 10 * shimmer;
-    ctx.drawImage(img, W / 2 - dw / 2 + s + dx, H / 2 - dh / 2 + dy, dw, dh);
-    ctx.globalAlpha = 0.35 * shimmer;
-    ctx.drawImage(img, W / 2 - dw / 2 - s + dx, H / 2 - dh / 2 + dy, dw, dh);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
-  }
-  if (punch > 0.55) {
-    ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.5 * punch;
-    ctx.drawImage(img, W / 2 - dw / 2 + 22 * punch + dx, H / 2 - dh / 2 + dy, dw, dh);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
-  }
-  ctx.restore();
-  // photoMerge: picture-in-picture inset of the same image as an accent
-  if (style.base === "photoMerge") {
-    const insetW = W * 0.36;
-    const insetH = insetW * (img.height / img.width);
-    const ix = W - insetW - W * 0.06 + Math.sin(progress * Math.PI) * 12;
-    const iy = H - insetH - H * 0.08;
-    const insetAlpha = 0.85 * (0.7 + 0.3 * Math.sin(progress * Math.PI));
-    ctx.save();
-    ctx.globalAlpha = insetAlpha;
-    ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = Math.max(2, W * 0.003);
-    ctx.shadowColor = "rgba(255,46,136,0.7)"; ctx.shadowBlur = 24;
-    ctx.strokeRect(ix - 2, iy - 2, insetW + 4, insetH + 4);
-    ctx.shadowBlur = 0;
-    ctx.filter = filter || "none";
-    ctx.drawImage(img, ix, iy, insetW, insetH);
-    ctx.restore();
-  }
-  if (flash > 0.35) {
-    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
-    ctx.fillRect(0, 0, W, H);
-  }
-  if (shimmer > 0.15) {
-    ctx.globalAlpha = 0.06 + shimmer * 0.05;
-    for (let i = 0; i < 40; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
-      ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
-    }
-    ctx.globalAlpha = 1;
-  }
-  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
-  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
 }
 
 function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number) {
@@ -642,10 +558,10 @@ function Editor() {
 
     const myId = ++renderIdRef.current;
     setStage("rendering");
-    setProgress(0.04);
+    setProgress(0.01);
     setPhase("record");
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
-    setLog("रेंडरिंग आरंभ हो रही है…");
+    setLog("1% — तेज़ रेंडरिंग स्टार्ट हो रही है…");
     await waitForNextPaint();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1420,21 +1336,28 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
 }
 
 function RenderingOverlay({ progress, phase, log }: { progress: number; phase: "record" | "encode" | ""; log: string }) {
-  const pct = Math.round(progress * 100);
+  const pct = Math.max(1, Math.min(100, Math.round(progress * 100)));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-2xl px-4">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950/95 p-6 text-center shadow-xl">
-        <div className="text-sm font-black uppercase tracking-[0.35em] text-white/60">Processing</div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4">
+      <div className="w-full max-w-md rounded-[28px] border border-white/15 bg-white/5 p-6 text-center shadow-[0_24px_120px_-48px_rgba(59,130,246,0.4)] backdrop-blur-xl">
+        <div className="text-xs font-black uppercase tracking-[0.4em] text-sky-100/70">PREMIUM RENDER</div>
         <div className="mt-4 text-3xl font-black tracking-tight text-white">{phase === "encode" ? "Exporting" : "Rendering"}</div>
-        <div className="mt-4 text-xs uppercase tracking-[0.3em] text-white/50">
-          {phase === "encode" ? "Finalizing file" : "Beat-synced render"}
-        </div>
+        <div className="mt-2 text-sm uppercase tracking-[0.3em] text-slate-300">{phase === "encode" ? "Finalizing file" : "Sharp beat-sync action"}</div>
         <div className="mt-6">
-          <Progress value={Math.min(100, Math.max(0, pct))} />
+          <RenderingProgress value={pct} />
         </div>
         <div className="mt-3 text-base font-black text-white">{pct}%</div>
-        {log && <div className="mt-3 max-w-[22rem] text-center text-[11px] text-white/50">{log}</div>}
+        {log && <div className="mt-3 max-w-[22rem] mx-auto text-center text-[11px] text-slate-300">{log}</div>}
       </div>
+    </div>
+  );
+}
+
+function RenderingProgress({ value }: { value: number }) {
+  return (
+    <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-white/15">
+      <div className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-white via-sky-300 to-blue-500 transition-all duration-300" style={{ width: `${value}%` }} />
+      <div className="absolute inset-0 rounded-full border border-white/20" />
     </div>
   );
 }
