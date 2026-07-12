@@ -29,7 +29,7 @@ type Beats = {
   bpm: number;
   duration: number;
 };
-type Stage = "idle" | "analyzing" | "ready" | "syncing" | "ad" | "rendering" | "done";
+type Stage = "idle" | "analyzing" | "ready" | "syncing" | "synced" | "ad" | "rendering" | "done";
 type QualityKey = "480p" | "720p" | "1080p" | "4k";
 type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
 const QUALITIES: Record<QualityKey, QualityCfg> = {
@@ -379,6 +379,7 @@ function Editor() {
   const [quality, setQuality] = useState<QualityKey>("1080p");
 
   const renderIdRef = useRef(0);
+  const continueRenderRef = useRef<(() => void) | null>(null);
 
   const photosNeeded = beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
   const filledCount = slots.filter(Boolean).length;
@@ -487,15 +488,16 @@ function Editor() {
     setLog("Re-editing started — Photo sync and sharper cuts तैयार हो रहे हैं…");
     await waitForNextPaint();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await doRender();
+    await doRender(true);
   }
 
-  async function doRender() {
+  async function doRender(autoStart = false) {
     if (!audioFile || !beats) return;
     const photos = slots.filter(Boolean) as File[];
     if (photos.length === 0) return;
 
     const myId = ++renderIdRef.current;
+    continueRenderRef.current = null;
     setStage("syncing");
     setPhase("sync");
     setProgress(0.01);
@@ -565,7 +567,23 @@ function Editor() {
       }
 
       setProgress(1);
-      setLog("Sync complete — तैयार हो रहा है…");
+      setLog("✓ Photo sync complete — GENERATE दबाएँ, फिर rendering शुरू होगा।");
+      await waitForNextPaint();
+      setStage("synced");
+      if (autoStart) {
+        await new Promise((resolve) => { continueRenderRef.current = resolve; resolve(); });
+      } else {
+        await new Promise<void>((resolve) => {
+          continueRenderRef.current = resolve;
+        });
+      }
+      continueRenderRef.current = null;
+      if (renderIdRef.current !== myId) return;
+
+      setStage("rendering");
+      setPhase("record");
+      setLog("Audio तैयार — sharp rendering शुरू हो रहा है…");
+      setProgress(0.18);
       await waitForNextPaint();
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
@@ -796,18 +814,18 @@ function Editor() {
   }
 
   const audioReady = !!beats && stage !== "analyzing";
-  const isGenerating = stage === "syncing" || stage === "rendering";
+  const isGenerating = stage === "syncing" || stage === "synced" || stage === "rendering";
   const canGenerate = audioReady && filledCount >= 1 && stage === "ready";
   const buttonLabel = stage === "syncing"
-    ? syncCount > 0 && syncTotal > 0 && syncCount >= syncTotal
-      ? "GENERATE…"
-      : "SYNCING…"
-    : stage === "rendering"
-      ? "RENDERING…"
-      : canGenerate
-        ? "GO ▶"
-        : "GO (पहले फोटो भरें)";
-  const buttonDisabled = !canGenerate || stage === "syncing" || stage === "rendering";
+    ? "SYNCING…"
+    : stage === "synced"
+      ? "GENERATE ▶"
+      : stage === "rendering"
+        ? "RENDERING…"
+        : canGenerate
+          ? "GO ▶"
+          : "GO (पहले फोटो भरें)";
+  const buttonDisabled = !canGenerate || stage === "rendering";
 
   return (
     <div className="min-h-screen text-white" style={{
@@ -906,7 +924,7 @@ function Editor() {
         )}
 
         {/* STEP 4: GO */}
-        {beats && (stage === "ready" || stage === "syncing") && (
+        {beats && stage === "ready" && (
           <div className="mt-6">
             <button type="button" disabled={buttonDisabled}
               onClick={() => { if (stage === "ready") void tryGenerate(); }}
@@ -924,8 +942,9 @@ function Editor() {
 
         {/* Immediate render start; ad delay removed for faster UX */}
 
-        {(stage === "rendering" || stage === "syncing") && (
-          <RenderingOverlay stage={stage} progress={progress} phase={phase} log={log} syncCount={syncCount} syncTotal={syncTotal} />
+        {(stage === "rendering" || stage === "syncing" || stage === "synced") && (
+          <RenderingOverlay stage={stage} progress={progress} phase={phase} log={log} syncCount={syncCount} syncTotal={syncTotal}
+            onGenerate={() => { if (stage === "synced") continueRenderRef.current?.(); }} />
         )}
 
         {stage === "done" && videoUrl && (
@@ -1297,11 +1316,12 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
   );
 }
 
-function RenderingOverlay({ stage, progress, phase, log, syncCount, syncTotal }: { stage: Stage; progress: number; phase: "sync" | "record" | "encode" | ""; log: string; syncCount: number; syncTotal: number; }) {
+function RenderingOverlay({ stage, progress, phase, log, syncCount, syncTotal, onGenerate }: { stage: Stage; progress: number; phase: "sync" | "record" | "encode" | ""; log: string; syncCount: number; syncTotal: number; onGenerate?: () => void; }) {
   const pct = Math.max(1, Math.min(100, Math.round(progress * 100)));
   const isSync = stage === "syncing";
-  const title = isSync ? "Photo Syncing" : phase === "encode" ? "Exporting" : "Rendering";
-  const subtitle = isSync ? `Photos ${syncCount}/${syncTotal}` : phase === "encode" ? "Finalizing file" : "Sharp beat-sync action";
+  const isSynced = stage === "synced";
+  const title = isSync ? "Photo Syncing" : isSynced ? "Ready to Generate" : phase === "encode" ? "Exporting" : "Rendering";
+  const subtitle = isSync ? `Photos ${syncCount}/${syncTotal}` : isSynced ? `Ready to render with ${syncCount}/${syncTotal} photos` : phase === "encode" ? "Finalizing file" : "Sharp beat-sync action";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4">
@@ -1317,6 +1337,12 @@ function RenderingOverlay({ stage, progress, phase, log, syncCount, syncTotal }:
         </div>
         <div className="mt-3 text-base font-black text-white">{pct}%</div>
         {log && <div className="mt-3 max-w-[22rem] mx-auto text-center text-[11px] text-slate-300">{log}</div>}
+        {isSynced && onGenerate && (
+          <button type="button" onClick={onGenerate}
+            className="mt-6 inline-flex items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-black uppercase tracking-[0.24em] text-slate-900 transition hover:bg-slate-100">
+            GENERATE
+          </button>
+        )}
       </div>
     </div>
   );
