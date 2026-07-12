@@ -248,13 +248,13 @@ function mulberry32(a: number) {
 function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const allBases = ["punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","spiralZoom","dutchAngle"] as const;
-  const allEntries = ["slideL","slideR","slideU","slideD","zoomIn","spinIn","glitchIn","shatterIn"] as const;
+  const allBases = ["punchIn","punchOut","whipPan","dolly","smoothPan","parallax3D"] as const;
+  const allEntries = ["slideL","slideR","slideU","slideD","zoomIn","glitchIn","shatterIn"] as const;
   const allExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
   const bases = allBases;
   const entries = allEntries;
   const exits = allExits;
-  const filters = ["none","none","cool","warm"] as const;
+  const filters = ["none"] as const;
   const recentBases = new Set(recent.slice(-4).map(s => s.base));
   const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
   const recentExits = new Set(recent.slice(-4).map(s => s.exit));
@@ -286,80 +286,27 @@ function drawFrame(
   else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
 
   const baseScale = Math.min(W / img.width, H / img.height);
-  let scale = baseScale; let dx = 0, dy = 0, rot = 0;
+  let scale = baseScale; let dx = 0, dy = 0;
   const eased = EASE(progress);
 
   switch (style.base) {
-    case "kenburns":
-      scale *= 1.05 + 0.12 * eased + 0.18 * punch;
-      dx = style.panX * 60 * eased; dy = style.panY * 40 * eased; break;
     case "punchIn": scale *= 1 + 0.25 * eased + 0.28 * punch; break;
     case "punchOut": scale *= 1.3 - 0.25 * eased + 0.2 * punch; break;
-    case "orbit":
-      scale *= 1.08 + 0.1 * punch;
-      rot = style.rotDir * 0.08 * (eased - 0.5);
-      dx = Math.sin(progress * Math.PI) * 40 * style.panX; break;
-    case "tiltShake": {
-      scale *= 1.03 + 0.18 * punch;
-      rot = style.rotDir * (0.02 + 0.05 * punch);
-      const amp = punch > 0.35 ? 45 * (punch - 0.3) : 0;
-      dx = (Math.random() - 0.5) * amp; dy = (Math.random() - 0.5) * amp; break;
-    }
-    case "whipPan": scale *= 1.05; dx = (progress - 0.5) * W * 0.6 * style.rotDir; break;
+    case "whipPan": scale *= 1.05; dx = (progress - 0.5) * W * 0.6 * style.panX; break;
     case "dolly": scale *= 1 + 0.35 * eased + 0.25 * punch; dy = -eased * 30; break;
-    case "handheld": {
-      scale *= 1.04 + 0.14 * punch;
-      const t = progress * Math.PI * 4;
-      const jitter = punch > 0.35 ? 24 * (punch - 0.3) : 0;
-      dx = Math.sin(t + style.seed) * 8 + (Math.random() - 0.5) * jitter;
-      dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
-      rot = Math.sin(t * 0.4) * 0.015; break;
+    case "smoothPan": {
+      scale *= 1.04 + 0.08 * eased;
+      dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
     }
     case "parallax3D": {
       scale *= 1.1 + 0.08 * eased + 0.15 * punch;
       const t = progress * Math.PI * 2;
       dx = Math.sin(t) * 55 * style.panX;
-      dy = Math.cos(t * 0.7) * 30 * style.panY;
-      rot = style.rotDir * 0.03 * Math.sin(t); break;
-    }
-    case "spiralZoom": {
-      scale *= 1 + 0.28 * eased + 0.2 * punch;
-      const t = progress * Math.PI * 2;
-      rot = style.rotDir * eased * 0.25;
-      dx = Math.sin(t) * 20; dy = Math.cos(t) * 20; break;
-    }
-    case "dutchAngle": {
-      scale *= 1.08 + 0.12 * eased + 0.18 * punch;
-      rot = style.rotDir * (0.05 + 0.03 * eased);
-      dx = style.panX * 40 * eased; break;
-    }
-    case "smoothPan": {
-      // Calm ease-in-out pan for soft passages — no shake, no bass amplification
-      scale *= 1.04 + 0.08 * eased;
-      dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
-    }
-    case "layerPeel3D": {
-      // Fake 3D: perspective-like x-skew via horizontal squeeze + rotate
-      scale *= 1.08 + 0.1 * eased + 0.15 * punch;
-      rot = style.rotDir * (0.02 + 0.06 * eased);
-      dx = style.panX * 90 * (0.5 - Math.abs(0.5 - eased)); break;
-    }
-    case "liquidWarp": {
-      // Gentle sinusoidal drift — feels like liquid
-      scale *= 1.06 + 0.06 * eased + 0.12 * punch;
-      const t = progress * Math.PI * 2;
-      dx = Math.sin(t + style.seed * 0.01) * 35;
-      dy = Math.cos(t * 0.6 + style.seed * 0.01) * 22;
-      rot = Math.sin(t * 0.5) * 0.02 * style.rotDir; break;
-    }
-    case "photoMerge": {
-      // Base draw is smooth; overlay effect done later as picture-in-picture
-      scale *= 1.05 + 0.1 * eased + 0.12 * punch;
-      dx = style.panX * 30 * eased; dy = style.panY * 20 * eased; break;
+      dy = Math.cos(t * 0.7) * 30 * style.panY; break;
     }
   }
   if (punch > 0.55 && style.base !== "smoothPan") {
-    const amp = 20 * (punch - 0.5);
+    const amp = 14 * (punch - 0.5);
     dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
   }
   let entryAlpha = 1;
@@ -371,14 +318,12 @@ function drawFrame(
       case "slideU": dy -= H * 0.6 * inv; break;
       case "slideD": dy += H * 0.6 * inv; break;
       case "zoomIn": scale *= 0.6 + 0.4 * EASE(p); break;
-      case "spinIn": rot += inv * 0.8 * style.rotDir; scale *= 0.6 + 0.4 * EASE(p); break;
-      case "irisIn": break;
-      case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
+      case "glitchIn": dx += (Math.random() - 0.5) * 32 * inv; dy += (Math.random() - 0.5) * 12 * inv; break;
       case "shatterIn": {
-        const jitter = inv * 60;
-        dx += (Math.sin(style.seed) * 0.5 + 0.5 - 0.5) * jitter;
-        dy += (Math.cos(style.seed * 1.3) * 0.5 + 0.5 - 0.5) * jitter;
-        rot += inv * 0.12 * style.rotDir; break;
+        const jitter = inv * 40;
+        dx += (Math.sin(style.seed) * 0.5) * jitter;
+        dy += (Math.cos(style.seed * 1.3) * 0.5) * jitter;
+        break;
       }
     }
   }
