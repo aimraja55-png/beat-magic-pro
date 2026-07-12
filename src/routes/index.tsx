@@ -681,10 +681,11 @@ function Editor() {
       const targetMax = Math.max(W, H) * 1.1;
       const resizeQuality = W >= 2160 ? "medium" : "high";
       const imgs: Array<CanvasImageSource & { width: number; height: number }> = [];
+      setProgress(0.08);
       for (let idx = 0; idx < photos.length; idx++) {
         const f = photos[idx];
         setLog(`Photos को प्रीप्रोसेस किया जा रहा है… (${idx + 1}/${photos.length})`);
-        setProgress(0.08 + (idx / photos.length) * 0.08);
+        setProgress(0.08 + ((idx + 1) / photos.length) * 0.08);
         await waitForNextPaint();
         try {
           const bmp = await createImageBitmap(f, {
@@ -811,6 +812,10 @@ function Editor() {
         audioEl.oncanplay = done;
         audioEl.onerror = fail;
       });
+      setLog("Audio तैयार हो गया — render जल्दी शुरू हो रहा है…");
+      setProgress(0.18);
+      await waitForNextPaint();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       const ac = new AudioContext();
       const src = ac.createMediaElementSource(audioEl);
@@ -1430,30 +1435,6 @@ function RenderingOverlay({ progress, phase, log }: { progress: number; phase: "
         <div className="mt-3 text-base font-black text-white">{pct}%</div>
         {log && <div className="mt-3 max-w-[22rem] text-center text-[11px] text-white/50">{log}</div>}
       </div>
-    </div>
-  );
-}
-
-function CircularSpinner({ percent }: { percent: number }) {
-  const size = 160; const stroke = 10; const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r; const offset = c - (percent / 100) * c;
-  return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
-        <defs>
-          <linearGradient id="sp" x1="0" x2="1">
-            <stop offset="0%" stopColor="#ff2e88" /><stop offset="100%" stopColor="#ffb347" />
-          </linearGradient>
-        </defs>
-        <circle cx={size / 2} cy={size / 2} r={r} stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} fill="none" />
-        <circle cx={size / 2} cy={size / 2} r={r} stroke="url(#sp)" strokeWidth={stroke} fill="none"
-          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 0.3s ease" }} />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="text-3xl font-black">{percent}%</div>
-      </div>
-      <div className="absolute inset-0 -z-10 animate-pulse rounded-full bg-[#ff2e88]/20 blur-3xl" />
     </div>
   );
 }
