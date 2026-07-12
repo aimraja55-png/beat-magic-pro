@@ -230,6 +230,7 @@ function getBestRecorderMime() {
 }
 
 /* ---------------- Cinematic Effects ---------------- */
+type ImageBitmapResizeQuality = "low" | "medium" | "high";
 type StylePack = {
   base: "punchIn" | "punchOut" | "whipPan" | "dolly" | "parallax3D" | "smoothPan";
   entry: "slideL" | "slideR" | "slideU" | "slideD" | "zoomIn" | "glitchIn" | "shatterIn";
@@ -264,7 +265,7 @@ function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<strin
   const base = pickUnique(bases, recentBases);
   const entry = pickUnique(entries, recentEntries);
   const exit = pickUnique(exits, recentExits);
-  return { base, entry, exit, filter: pick(filters), panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
+  return { base, entry, exit, panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
 }
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
@@ -323,7 +324,6 @@ function drawFrame(
       case "slideU": dy -= H * 0.5 * e; break;
       case "slideD": dy += H * 0.5 * e; break;
       case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
-      case "none": break;
     }
   }
   const dw = img.width * scale; const dh = img.height * scale;
@@ -571,7 +571,7 @@ function Editor() {
       await waitForNextPaint();
       setStage("synced");
       if (autoStart) {
-        await new Promise((resolve) => { continueRenderRef.current = resolve; resolve(); });
+        await new Promise<void>((resolve) => { continueRenderRef.current = resolve; resolve(); });
       } else {
         await new Promise<void>((resolve) => {
           continueRenderRef.current = resolve;
@@ -642,7 +642,7 @@ function Editor() {
         // Force smoothPan + fadeIn/fadeOut in calm passages
         const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
         if (isCalmAt(segMid)) {
-          const calmBases = ["smoothPan","kenburns","parallax3D","dolly"] as const;
+          const calmBases = ["smoothPan","parallax3D","dolly"] as const;
           const calmEntries = ["slideL","slideR","slideU","slideD","zoomIn"] as const;
           const calmExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
           const r = mulberry32(seed);
@@ -825,7 +825,7 @@ function Editor() {
         : canGenerate
           ? "GO ▶"
           : "GO (पहले फोटो भरें)";
-  const buttonDisabled = !canGenerate || stage === "rendering";
+  const buttonDisabled = !canGenerate;
 
   return (
     <div className="min-h-screen text-white" style={{
