@@ -94,7 +94,6 @@ function saveSessionOffset(f: File, seconds: number) {
 function clearSessionOffset(f: File) {
   try { localStorage.removeItem(sessionKey(f)); } catch { /* ignore */ }
 }
-function audioMemoryKey(f: File) { return `raja_stylemem_${f.name}_${f.size}`; }
 function classifyIntensity(kickEnv: Float32Array): "chill" | "normal" | "aggressive" {
   if (kickEnv.length === 0) return "normal";
   let sum = 0, hits = 0;
@@ -219,20 +218,29 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type ImageBitmapResizeQuality = "low" | "medium" | "high";
-const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
-  ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
+  ctx: CanvasRenderingContext2D,
+  img: CanvasImageSource & { width: number; height: number },
+  W: number,
+  H: number,
+  zoom = 1,
+  alpha = 1,
+  clear = true,
 ) {
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, W, H);
-  const scale = Math.min(W / img.width, H / img.height);
-  const dw = img.width * scale;
-  const dh = img.height * scale;
+  if (clear) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+  }
+  const fitScale = Math.min(W / img.width, H / img.height);
+  const effectiveScale = Math.min(1.1, Math.max(0.95, zoom)) * fitScale;
+  const dw = img.width * effectiveScale;
+  const dh = img.height * effectiveScale;
   const dx = (W - dw) / 2;
   const dy = (H - dh) / 2;
   ctx.save();
   ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = alpha;
   ctx.drawImage(img, dx, dy, dw, dh);
   ctx.restore();
 }
@@ -617,11 +625,26 @@ function Editor() {
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
         const envIdx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(abs / beats.hop)));
-        const punch = beats.kickEnv[envIdx] ?? 0;
-        const flash = beats.clapEnv[envIdx] ?? 0;
-        const shimmer = beats.hatEnv[envIdx] ?? 0;
-        const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H);
+        const kickValue = beats.kickEnv[envIdx] ?? 0;
+        const clapValue = beats.clapEnv[envIdx] ?? 0;
+        const energy = Math.min(1, Math.max(0, (kickValue * 0.8 + clapValue * 0.2) * 1.2));
+        const pulseZoom = 1 + 0.1 * energy;
+        const transitionWindow = Math.min(0.22, segLen * 0.5);
+        const nextIndex = Math.min(i + 1, seq.length - 1);
+        const isTransition = nextIndex > i && t >= segEnd - transitionWindow;
+        if (isTransition) {
+          const progressIn = (t - (segEnd - transitionWindow)) / transitionWindow;
+          const smoothProgress = Math.max(0, Math.min(1, progressIn));
+          const prevZoom = 1 - 0.08 * smoothProgress + 0.02 * energy;
+          const nextZoom = 1.08 - 0.08 * smoothProgress + 0.02 * energy;
+          const current = seq[Math.min(i, seq.length - 1)];
+          const nextItem = seq[nextIndex];
+          if (current) drawFrame(ctx, current.img, W, H, Math.max(1, prevZoom));
+          if (nextItem) drawFrame(ctx, nextItem.img, W, H, Math.max(1, nextZoom));
+        } else {
+          const item = seq[Math.min(i, seq.length - 1)];
+          if (item) drawFrame(ctx, item.img, W, H, Math.min(1.1, pulseZoom));
+        }
         if (drawWM) drawWatermark(ctx, W, H);
         setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
         raf = requestAnimationFrame(render);
