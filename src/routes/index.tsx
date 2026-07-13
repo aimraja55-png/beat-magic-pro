@@ -275,69 +275,18 @@ const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
-  style: StylePack, progress: number, punch: number,
 ) {
-  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-  const baseScale = Math.min(W / img.width, H / img.height);
-  let scale = baseScale; let dx = 0, dy = 0;
-  const eased = EASE(progress);
-
-  switch (style.base) {
-    case "punchIn": scale *= 1 + 0.25 * eased + 0.28 * punch; break;
-    case "punchOut": scale *= 1.3 - 0.25 * eased + 0.2 * punch; break;
-    case "whipPan": scale *= 1.05; dx = (progress - 0.5) * W * 0.6 * style.panX; break;
-    case "dolly": scale *= 1 + 0.35 * eased + 0.25 * punch; dy = -eased * 30; break;
-    case "smoothPan": {
-      scale *= 1.04 + 0.08 * eased;
-      dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
-    }
-    case "parallax3D": {
-      scale *= 1.1 + 0.08 * eased + 0.15 * punch;
-      const t = progress * Math.PI * 2;
-      dx = Math.sin(t) * 55 * style.panX;
-      dy = Math.cos(t * 0.7) * 30 * style.panY; break;
-    }
-  }
-  if (punch > 0.55 && style.base !== "smoothPan") {
-    const amp = 14 * (punch - 0.5);
-    dx += Math.sign(style.panX) * amp; dy += Math.sign(style.panY) * amp;
-  }
-  let entryAlpha = 1;
-  if (progress < 0.25) {
-    const p = progress / 0.25; const inv = 1 - EASE(p); entryAlpha = EASE(p);
-    switch (style.entry) {
-      case "slideL": dx -= W * 0.6 * inv; break;
-      case "slideR": dx += W * 0.6 * inv; break;
-      case "slideU": dy -= H * 0.6 * inv; break;
-      case "slideD": dy += H * 0.6 * inv; break;
-      case "zoomIn": scale *= 0.6 + 0.4 * EASE(p); break;
-      case "glitchIn": dx += Math.sign(style.panX) * 32 * inv; dy += Math.sign(style.panY) * 12 * inv; break;
-      case "shatterIn": {
-        const jitter = inv * 40;
-        dx += Math.sign(style.panX) * jitter;
-        dy += Math.sign(style.panY) * jitter;
-        break;
-      }
-    }
-  }
-  if (progress > 0.8 && style.exit !== "none") {
-    const p = (progress - 0.8) / 0.2; const e = EASE(p);
-    switch (style.exit) {
-      case "slideL": dx -= W * 0.5 * e; break;
-      case "slideR": dx += W * 0.5 * e; break;
-      case "slideU": dy -= H * 0.5 * e; break;
-      case "slideD": dy += H * 0.5 * e; break;
-      case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
-    }
-  }
-  const dw = img.width * scale; const dh = img.height * scale;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+  const scale = Math.min(W / img.width, H / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  const dx = (W - dw) / 2;
+  const dy = (H - dh) / 2;
   ctx.save();
   ctx.imageSmoothingEnabled = false;
-  ctx.globalAlpha = entryAlpha;
-  ctx.translate(W / 2 + dx, H / 2 + dy);
-  ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+  ctx.drawImage(img, dx, dy, dw, dh);
   ctx.restore();
-  ctx.globalAlpha = 1;
 }
 
 function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number) {
@@ -634,38 +583,12 @@ function Editor() {
       };
 
       type DrawImg = CanvasImageSource & { width: number; height: number };
-      const seq: { img: DrawImg; style: StylePack }[] = [];
-      const recentStyles: StylePack[] = [];
-      // Zero-repetition memory across renders for this same audio file
-      const bannedStyles = new Set<string>(getUsedStyles(audioFile));
-      const usedThisRun: string[] = [];
+      const seq: { img: DrawImg }[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        // seed varies with time so re-renders never draw the same combos
-        const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
-        let style = pickStylePack(seed, recentStyles, bannedStyles, intensity);
-        // Force smoothPan + fadeIn/fadeOut in calm passages
-        const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
-        if (isCalmAt(segMid)) {
-          const calmBases = ["smoothPan","parallax3D","dolly"] as const;
-          const calmEntries = ["slideL","slideR","slideU","slideD","zoomIn"] as const;
-          const calmExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
-          const r = mulberry32(seed);
-          style = {
-            ...style,
-            base: calmBases[Math.floor(r() * calmBases.length)],
-            entry: calmEntries[Math.floor(r() * calmEntries.length)],
-            exit: calmExits[Math.floor(r() * calmExits.length)],
-          };
-        }
-        seq.push({ img: imgs[idx], style });
-        recentStyles.push(style);
-        usedThisRun.push(style.base, style.entry, style.exit);
-        if (recentStyles.length > 4) recentStyles.shift();
+        seq.push({ img: imgs[idx] });
       }
-      // Persist so the NEXT render of this song picks fresh effects
-      pushUsedStyles(audioFile, usedThisRun);
 
       const canvas = document.createElement("canvas");
       canvas.width = W; canvas.height = H;
@@ -750,7 +673,7 @@ function Editor() {
         const flash = beats.clapEnv[envIdx] ?? 0;
         const shimmer = beats.hatEnv[envIdx] ?? 0;
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch);
+        if (item) drawFrame(ctx, item.img, W, H);
         if (drawWM) drawWatermark(ctx, W, H);
         setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
         raf = requestAnimationFrame(render);
