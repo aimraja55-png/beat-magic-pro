@@ -219,29 +219,55 @@ function getBestRecorderMime() {
 /* ---------------- Cinematic Effects ---------------- */
 type ImageBitmapResizeQuality = "low" | "medium" | "high";
 
+function easeInOutQuint(x: number) {
+  return x < 0.5
+    ? 16 * x * x * x * x * x
+    : 1 - Math.pow(-2 * x + 2, 5) / 2;
+}
 function drawFrame(
   ctx: CanvasRenderingContext2D,
   img: CanvasImageSource & { width: number; height: number },
   W: number,
   H: number,
-  zoom = 1,
-  alpha = 1,
-  clear = true,
+  options: {
+    zoom?: number;
+    rotation?: number;
+    alpha?: number;
+    blurBackground?: boolean;
+    clear?: boolean;
+  } = {},
 ) {
+  const { zoom = 1, rotation = 0, alpha = 1, blurBackground = false, clear = true } = options;
   if (clear) {
+    ctx.save();
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
+    ctx.restore();
   }
   const fitScale = Math.min(W / img.width, H / img.height);
-  const effectiveScale = Math.min(1.1, Math.max(0.95, zoom)) * fitScale;
+  const effectiveScale = Math.min(1.15, Math.max(0.95, zoom)) * fitScale;
   const dw = img.width * effectiveScale;
   const dh = img.height * effectiveScale;
   const dx = (W - dw) / 2;
   const dy = (H - dh) / 2;
+  if (blurBackground) {
+    ctx.save();
+    ctx.filter = "blur(20px)";
+    ctx.globalAlpha = 0.28;
+    const backgroundScale = Math.max(W / img.width, H / img.height);
+    const bgDw = img.width * backgroundScale;
+    const bgDh = img.height * backgroundScale;
+    const bgDx = (W - bgDw) / 2;
+    const bgDy = (H - bgDh) / 2;
+    ctx.drawImage(img, bgDx, bgDy, bgDw, bgDh);
+    ctx.restore();
+  }
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.globalAlpha = alpha;
-  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.translate(W / 2, H / 2);
+  ctx.rotate(rotation);
+  ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
 }
 
@@ -627,23 +653,32 @@ function Editor() {
         const envIdx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(abs / beats.hop)));
         const kickValue = beats.kickEnv[envIdx] ?? 0;
         const clapValue = beats.clapEnv[envIdx] ?? 0;
-        const energy = Math.min(1, Math.max(0, (kickValue * 0.8 + clapValue * 0.2) * 1.2));
-        const pulseZoom = 1 + 0.1 * energy;
-        const transitionWindow = Math.min(0.22, segLen * 0.5);
+        const hatValue = beats.hatEnv[envIdx] ?? 0;
+        const energy = Math.min(1, Math.max(0, (kickValue * 0.85 + clapValue * 0.15)));
+        const pulseZoom = 1 + 0.15 * easeInOutQuint(energy);
+        const rotation = (clapValue - 0.5) * 0.035 * easeInOutQuint(energy);
+        const flashAlpha = Math.max(0, Math.min(1, (hatValue - 0.6) * 2.5)) * 0.14;
+        const transitionWindow = Math.min(0.18, segLen * 0.45);
         const nextIndex = Math.min(i + 1, seq.length - 1);
         const isTransition = nextIndex > i && t >= segEnd - transitionWindow;
         if (isTransition) {
           const progressIn = (t - (segEnd - transitionWindow)) / transitionWindow;
-          const smoothProgress = Math.max(0, Math.min(1, progressIn));
-          const prevZoom = 1 - 0.08 * smoothProgress + 0.02 * energy;
-          const nextZoom = 1.08 - 0.08 * smoothProgress + 0.02 * energy;
+          const smoothProgress = easeInOutQuint(Math.max(0, Math.min(1, progressIn)));
+          const prevZoom = 1 + (-0.08 * smoothProgress + 0.02 * energy);
+          const nextZoom = 1 + (0.08 * smoothProgress + 0.02 * energy);
           const current = seq[Math.min(i, seq.length - 1)];
           const nextItem = seq[nextIndex];
-          if (current) drawFrame(ctx, current.img, W, H, Math.max(1, prevZoom));
-          if (nextItem) drawFrame(ctx, nextItem.img, W, H, Math.max(1, nextZoom));
+          if (current) drawFrame(ctx, current.img, W, H, { zoom: Math.max(0.96, prevZoom), rotation: 0, alpha: 1 - smoothProgress * 0.22, blurBackground: true, clear: true });
+          if (nextItem) drawFrame(ctx, nextItem.img, W, H, { zoom: Math.max(1, nextZoom), rotation: 0, alpha: 0.4 + smoothProgress * 0.6, blurBackground: true, clear: false });
         } else {
           const item = seq[Math.min(i, seq.length - 1)];
-          if (item) drawFrame(ctx, item.img, W, H, Math.min(1.1, pulseZoom));
+          if (item) drawFrame(ctx, item.img, W, H, { zoom: Math.min(1.15, pulseZoom), rotation, alpha: 1, blurBackground: true, clear: true });
+        }
+        if (flashAlpha > 0) {
+          ctx.save();
+          ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+          ctx.fillRect(0, 0, W, H);
+          ctx.restore();
         }
         if (drawWM) drawWatermark(ctx, W, H);
         setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
