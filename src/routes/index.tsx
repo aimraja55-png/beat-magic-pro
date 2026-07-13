@@ -248,8 +248,12 @@ function mulberry32(a: number) {
 function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const allBases = ["punchIn","punchOut","whipPan","dolly","smoothPan","parallax3D"] as const;
-  const allEntries = ["slideL","slideR","slideU","slideD","zoomIn","glitchIn","shatterIn"] as const;
+  const allBases = intensity === "chill"
+    ? ["smoothPan", "parallax3D", "dolly"] as const
+    : ["punchIn","punchOut","whipPan","dolly","smoothPan","parallax3D"] as const;
+  const allEntries = intensity === "chill"
+    ? ["slideL","slideR","slideU","slideD","zoomIn"] as const
+    : ["slideL","slideR","slideU","slideD","zoomIn","glitchIn","shatterIn"] as const;
   const allExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
   const bases = allBases;
   const entries = allEntries;
@@ -328,6 +332,7 @@ function drawFrame(
   }
   const dw = img.width * scale; const dh = img.height * scale;
   ctx.save();
+  ctx.imageSmoothingEnabled = false;
   ctx.globalAlpha = entryAlpha;
   ctx.translate(W / 2 + dx, H / 2 + dy);
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
@@ -474,7 +479,7 @@ function Editor() {
   function confirmQuality(q: QualityKey) {
     setQuality(q);
     setQualityOpen(false);
-    void doRender();
+    void doRender(true);
   }
 
   async function doReEdit() {
@@ -550,6 +555,7 @@ function Editor() {
             resizeWidth: targetMax,
             resizeHeight: targetMax,
             resizeQuality: resizeQuality as ImageBitmapResizeQuality,
+            imageOrientation: "from-image",
           } as ImageBitmapOptions);
           bitmaps.push(bmp);
           imgs.push(bmp as unknown as CanvasImageSource & { width: number; height: number });
