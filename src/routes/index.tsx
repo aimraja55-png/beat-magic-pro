@@ -95,18 +95,6 @@ function clearSessionOffset(f: File) {
   try { localStorage.removeItem(sessionKey(f)); } catch { /* ignore */ }
 }
 function audioMemoryKey(f: File) { return `raja_stylemem_${f.name}_${f.size}`; }
-function getUsedStyles(f: File): string[] {
-  try { return JSON.parse(localStorage.getItem(audioMemoryKey(f)) || "[]"); } catch { return []; }
-}
-function pushUsedStyles(f: File, tokens: string[]) {
-  try {
-    const prev = getUsedStyles(f);
-    const merged = Array.from(new Set([...prev, ...tokens]));
-    // cap memory so we never run out of variety
-    const capped = merged.slice(-40);
-    localStorage.setItem(audioMemoryKey(f), JSON.stringify(capped));
-  } catch { /* ignore */ }
-}
 function classifyIntensity(kickEnv: Float32Array): "chill" | "normal" | "aggressive" {
   if (kickEnv.length === 0) return "normal";
   let sum = 0, hits = 0;
@@ -231,46 +219,6 @@ function getBestRecorderMime() {
 
 /* ---------------- Cinematic Effects ---------------- */
 type ImageBitmapResizeQuality = "low" | "medium" | "high";
-type StylePack = {
-  base: "punchIn" | "punchOut" | "whipPan" | "dolly" | "parallax3D" | "smoothPan";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "zoomIn" | "glitchIn" | "shatterIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "zoomOut" | "none";
-  panX: number; panY: number; rotDir: number; seed: number;
-};
-function mulberry32(a: number) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = a; t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
-  const rand = mulberry32(seed);
-  const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const allBases = intensity === "chill"
-    ? ["smoothPan", "parallax3D", "dolly"] as const
-    : ["punchIn","punchOut","whipPan","dolly","smoothPan","parallax3D"] as const;
-  const allEntries = intensity === "chill"
-    ? ["slideL","slideR","slideU","slideD","zoomIn"] as const
-    : ["slideL","slideR","slideU","slideD","zoomIn","glitchIn","shatterIn"] as const;
-  const allExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
-  const bases = allBases;
-  const entries = allEntries;
-  const exits = allExits;
-  const recentBases = new Set(recent.slice(-4).map(s => s.base));
-  const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
-  const recentExits = new Set(recent.slice(-4).map(s => s.exit));
-  const pickUnique = <T,>(arr: readonly T[], used: Set<T>): T => {
-    const avail = arr.filter(a => !used.has(a) && !banned.has(String(a)));
-    const pool = avail.length ? avail : arr;
-    return pool[Math.floor(rand() * pool.length)];
-  };
-  const base = pickUnique(bases, recentBases);
-  const entry = pickUnique(entries, recentEntries);
-  const exit = pickUnique(exits, recentExits);
-  return { base, entry, exit, panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
-}
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
