@@ -274,7 +274,7 @@ const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
-  style: StylePack, progress: number, punch: number, flash: number, shimmer: number,
+  style: StylePack, progress: number, punch: number, flash: number, shimmer: number, lowPower = false,
 ) {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
   let filter = "";
