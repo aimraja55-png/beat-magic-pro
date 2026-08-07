@@ -424,7 +424,9 @@ function drawFrame(
   }
   ctx.filter = filter || "none";
   ctx.globalAlpha = entryAlpha;
-  const trails = Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
+  const trails = lowPower
+    ? 1
+    : Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
   for (let k = trails; k >= 1; k--) {
     const f = k / trails;
     ctx.globalAlpha = entryAlpha * (0.14 + 0.15 * (1 - f));
@@ -441,7 +443,7 @@ function drawFrame(
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
   ctx.filter = "none"; ctx.globalAlpha = 1;
-  if (shimmer > 0.25) {
+  if (!lowPower && shimmer > 0.25) {
     ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.35 * shimmer;
     const s = 10 * shimmer;
     ctx.drawImage(img, W / 2 - dw / 2 + s + dx, H / 2 - dh / 2 + dy, dw, dh);
@@ -449,7 +451,7 @@ function drawFrame(
     ctx.drawImage(img, W / 2 - dw / 2 - s + dx, H / 2 - dh / 2 + dy, dw, dh);
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
   }
-  if (punch > 0.55) {
+  if (!lowPower && punch > 0.55) {
     ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.5 * punch;
     ctx.drawImage(img, W / 2 - dw / 2 + 22 * punch + dx, H / 2 - dh / 2 + dy, dw, dh);
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
@@ -476,7 +478,7 @@ function drawFrame(
     ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
     ctx.fillRect(0, 0, W, H);
   }
-  if (shimmer > 0.15) {
+  if (!lowPower && shimmer > 0.15) {
     ctx.globalAlpha = 0.06 + shimmer * 0.05;
     for (let i = 0; i < 40; i++) {
       ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
