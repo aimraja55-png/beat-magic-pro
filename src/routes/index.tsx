@@ -816,8 +816,40 @@ function Editor() {
 
       let stop = false;
       let raf = 0;
+      // ── DYNAMIC LOAD BALANCER ──
+      // Watches real frame times + JS heap pressure. When the device starts to
+      // struggle it drops into low-power mode (fewer trails/overlays, lower draw
+      // rate) instead of stuttering or crashing the tab.
+      let lowPower = lowEnd;
+      let slowFrames = 0;
+      let lastFrameAt = performance.now();
+      let lastDrawAt = 0;
+      let lastProgress = -1;
+      const perfMem = (performance as Performance & {
+        memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
+      }).memory;
+      const heapCheck = setInterval(() => {
+        if (!perfMem) return;
+        const used = perfMem.usedJSHeapSize / Math.max(1, perfMem.jsHeapSizeLimit);
+        if (used > 0.72 && !lowPower) {
+          lowPower = true;
+          setLog("⚡ Low-Power Mode — स्मूथ रखने के लिए इफेक्ट हल्के किए");
+        }
+      }, 1500);
       const render = () => {
         if (stop || renderIdRef.current !== myId) return;
+        const now = performance.now();
+        const frameMs = now - lastFrameAt;
+        lastFrameAt = now;
+        if (frameMs > 30) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
+        if (slowFrames > 8 && !lowPower) {
+          lowPower = true;
+          setLog("⚡ Low-Power Mode — स्मूथ रखने के लिए इफेक्ट हल्के किए");
+        }
+        // Frame pacing: in low-power mode draw at ~30fps so the encoder keeps up
+        const minGap = lowPower ? 1000 / 30 : 0;
+        if (minGap && now - lastDrawAt < minGap) { raf = requestAnimationFrame(render); return; }
+        lastDrawAt = now;
         const abs = audioEl.currentTime;
         const t = abs - startOffset;
         if (t >= targetDuration) { stop = true; return; }
@@ -831,9 +863,11 @@ function Editor() {
         const flash = beats.clapEnv[envIdx] ?? 0;
         const shimmer = beats.hatEnv[envIdx] ?? 0;
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
         if (drawWM) drawWatermark(ctx, W, H);
-        setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
+        // Throttle React updates to 1% steps — no re-render churn per frame
+        const p = Math.min(0.95, (t / targetDuration) * 0.95);
+        if (p - lastProgress >= 0.01) { lastProgress = p; setProgress(p); }
         raf = requestAnimationFrame(render);
       };
       raf = requestAnimationFrame(render);
@@ -847,6 +881,7 @@ function Editor() {
         }, 50);
       });
       cancelAnimationFrame(raf);
+      clearInterval(heapCheck);
       audioEl.pause();
       if (renderIdRef.current !== myId) return;
 
