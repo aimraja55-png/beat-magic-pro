@@ -845,10 +845,10 @@ function Editor() {
               🎬 Step 3 — मोड चुनें
             </h2>
             <div className="grid grid-cols-2 gap-3">
-              <ModeCard active={mode === "shorts"} title="Shorts" sub="15–60s • 9:16"
+              <ModeCard active={mode === "shorts"} title="Vertical" sub="9:16 • 15–60s"
                 onClick={() => setMode("shorts")} />
-              <ModeCard active={mode === "long"} title="Long Video"
-                sub={`Max ${LONG_MAX_SEC}s • 16:9${beats.duration > LONG_MAX_SEC ? " • chunks" : ""}`}
+              <ModeCard active={mode === "long"} title="Wide Cinematic"
+                sub={`16:9 • Max ${LONG_MAX_SEC}s${beats.duration > LONG_MAX_SEC ? " • chunks" : ""}`}
                 onClick={() => setMode("long")} />
             </div>
             {mode === "long" && beats.duration > LONG_MAX_SEC && (
