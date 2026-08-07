@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
+import { prepareCutouts, drawCutoutComposite, type CutoutMap } from "@/lib/neural-cutout";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Raja AI Pro-Editor — Auto Beat Sync Video" },
-      { name: "description", content: "2026 trending auto beat-sync video maker. Upload audio + photos, get a 1080p Shorts-ready clip — all in your browser." },
+      { name: "description", content: "Auto beat-sync AI video maker. Upload audio + photos and get a cinematic 1080p vertical or wide video — fully automatic, right in your browser." },
       { property: "og:title", content: "Raja AI Pro-Editor" },
       { property: "og:description", content: "Auto beat-sync 1080p video editor. 100% browser, no install." },
     ],
