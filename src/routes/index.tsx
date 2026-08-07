@@ -274,7 +274,7 @@ const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
-  style: StylePack, progress: number, punch: number, flash: number, shimmer: number,
+  style: StylePack, progress: number, punch: number, flash: number, shimmer: number, lowPower = false,
 ) {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
   let filter = "";
@@ -424,7 +424,9 @@ function drawFrame(
   }
   ctx.filter = filter || "none";
   ctx.globalAlpha = entryAlpha;
-  const trails = Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
+  const trails = lowPower
+    ? 1
+    : Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
   for (let k = trails; k >= 1; k--) {
     const f = k / trails;
     ctx.globalAlpha = entryAlpha * (0.14 + 0.15 * (1 - f));
@@ -441,7 +443,7 @@ function drawFrame(
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
   ctx.filter = "none"; ctx.globalAlpha = 1;
-  if (shimmer > 0.25) {
+  if (!lowPower && shimmer > 0.25) {
     ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.35 * shimmer;
     const s = 10 * shimmer;
     ctx.drawImage(img, W / 2 - dw / 2 + s + dx, H / 2 - dh / 2 + dy, dw, dh);
@@ -449,7 +451,7 @@ function drawFrame(
     ctx.drawImage(img, W / 2 - dw / 2 - s + dx, H / 2 - dh / 2 + dy, dw, dh);
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
   }
-  if (punch > 0.55) {
+  if (!lowPower && punch > 0.55) {
     ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.5 * punch;
     ctx.drawImage(img, W / 2 - dw / 2 + 22 * punch + dx, H / 2 - dh / 2 + dy, dw, dh);
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
@@ -476,7 +478,7 @@ function drawFrame(
     ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
     ctx.fillRect(0, 0, W, H);
   }
-  if (shimmer > 0.15) {
+  if (!lowPower && shimmer > 0.15) {
     ctx.globalAlpha = 0.06 + shimmer * 0.05;
     for (let i = 0; i < 40; i++) {
       ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
@@ -669,30 +671,39 @@ function Editor() {
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
+    let heapTimer: ReturnType<typeof setInterval> | null = null;
     try {
       // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
       // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
-      const targetMax = Math.max(W, H) * 1.25;
-      const imgs = await Promise.all(
-        photos.map(async (f) => {
-          try {
-            const bmp = await createImageBitmap(f, {
-              resizeWidth: targetMax,
-              resizeQuality: "high",
-            } as ImageBitmapOptions);
-            bitmaps.push(bmp);
-            return bmp as unknown as CanvasImageSource & { width: number; height: number };
-          } catch {
-            // Fallback for browsers that reject resize option
-            return await new Promise<HTMLImageElement>((res, rej) => {
-              const i = new Image();
-              const u = URL.createObjectURL(f);
-              imageUrls.push(u);
-              i.onload = () => res(i); i.onerror = rej; i.src = u;
-            });
-          }
-        }),
-      );
+      const targetMax = Math.max(W, H) * (lowEnd ? 1.0 : 1.25);
+      const decodeOne = async (f: File) => {
+        try {
+          const bmp = await createImageBitmap(f, {
+            resizeWidth: targetMax,
+            resizeQuality: lowEnd ? "medium" : "high",
+          } as ImageBitmapOptions);
+          bitmaps.push(bmp);
+          return bmp as unknown as CanvasImageSource & { width: number; height: number };
+        } catch {
+          // Fallback for browsers that reject resize option
+          return await new Promise<HTMLImageElement>((res, rej) => {
+            const i = new Image();
+            const u = URL.createObjectURL(f);
+            imageUrls.push(u);
+            i.onload = () => res(i); i.onerror = rej; i.src = u;
+          });
+        }
+      };
+      // Decode in small chunks (2 at a time) instead of all-at-once — keeps peak RAM
+      // low on cheap devices so Chrome never hits "Aw, Snap!".
+      const imgs: (CanvasImageSource & { width: number; height: number })[] = [];
+      const batch = lowEnd ? 1 : 2;
+      for (let i = 0; i < photos.length; i += batch) {
+        const part = await Promise.all(photos.slice(i, i + batch).map(decodeOne));
+        imgs.push(...part);
+        setLog(`फोटो तैयार हो रही हैं… ${Math.min(photos.length, i + batch)}/${photos.length}`);
+        await waitForNextPaint(); // yield → UI never freezes during decode
+      }
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
@@ -771,7 +782,7 @@ function Editor() {
 
       const canvas = document.createElement("canvas");
       canvas.width = W; canvas.height = H;
-      const ctx = canvas.getContext("2d")!;
+      const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true })!;
 
       const audioUrl = URL.createObjectURL(audioFile);
       const audioEl = new Audio(audioUrl);
@@ -806,8 +817,40 @@ function Editor() {
 
       let stop = false;
       let raf = 0;
+      // ── DYNAMIC LOAD BALANCER ──
+      // Watches real frame times + JS heap pressure. When the device starts to
+      // struggle it drops into low-power mode (fewer trails/overlays, lower draw
+      // rate) instead of stuttering or crashing the tab.
+      let lowPower = lowEnd;
+      let slowFrames = 0;
+      let lastFrameAt = performance.now();
+      let lastDrawAt = 0;
+      let lastProgress = -1;
+      const perfMem = (performance as Performance & {
+        memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
+      }).memory;
+      const heapCheck = heapTimer = setInterval(() => {
+        if (!perfMem) return;
+        const used = perfMem.usedJSHeapSize / Math.max(1, perfMem.jsHeapSizeLimit);
+        if (used > 0.72 && !lowPower) {
+          lowPower = true;
+          setLog("⚡ Low-Power Mode — स्मूथ रखने के लिए इफेक्ट हल्के किए");
+        }
+      }, 1500);
       const render = () => {
         if (stop || renderIdRef.current !== myId) return;
+        const now = performance.now();
+        const frameMs = now - lastFrameAt;
+        lastFrameAt = now;
+        if (frameMs > 30) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
+        if (slowFrames > 8 && !lowPower) {
+          lowPower = true;
+          setLog("⚡ Low-Power Mode — स्मूथ रखने के लिए इफेक्ट हल्के किए");
+        }
+        // Frame pacing: in low-power mode draw at ~30fps so the encoder keeps up
+        const minGap = lowPower ? 1000 / 30 : 0;
+        if (minGap && now - lastDrawAt < minGap) { raf = requestAnimationFrame(render); return; }
+        lastDrawAt = now;
         const abs = audioEl.currentTime;
         const t = abs - startOffset;
         if (t >= targetDuration) { stop = true; return; }
@@ -821,9 +864,11 @@ function Editor() {
         const flash = beats.clapEnv[envIdx] ?? 0;
         const shimmer = beats.hatEnv[envIdx] ?? 0;
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
         if (drawWM) drawWatermark(ctx, W, H);
-        setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
+        // Throttle React updates to 1% steps — no re-render churn per frame
+        const p = Math.min(0.95, (t / targetDuration) * 0.95);
+        if (p - lastProgress >= 0.01) { lastProgress = p; setProgress(p); }
         raf = requestAnimationFrame(render);
       };
       raf = requestAnimationFrame(render);
@@ -837,6 +882,7 @@ function Editor() {
         }, 50);
       });
       cancelAnimationFrame(raf);
+      clearInterval(heapCheck);
       audioEl.pause();
       if (renderIdRef.current !== myId) return;
 
@@ -883,6 +929,9 @@ function Editor() {
       }
       setTimeout(() => setCelebrate(false), 3500);
     } catch (error) {
+      if (heapTimer) clearInterval(heapTimer);
+      bitmaps.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
+      imageUrls.forEach((u) => URL.revokeObjectURL(u));
       if (renderIdRef.current !== myId) return;
       const msg = error instanceof Error ? error.message : String(error);
       setStage("ready"); setPhase(""); setProgress(0);
