@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
+import { prepareCutouts, drawCutoutComposite, type CutoutMap } from "@/lib/neural-cutout";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Raja AI Pro-Editor — Auto Beat Sync Video" },
-      { name: "description", content: "2026 trending auto beat-sync video maker. Upload audio + photos, get a 1080p Shorts-ready clip — all in your browser." },
+      { name: "description", content: "Auto beat-sync AI video maker. Upload audio + photos and get a cinematic 1080p vertical or wide video — fully automatic, right in your browser." },
       { property: "og:title", content: "Raja AI Pro-Editor" },
       { property: "og:description", content: "Auto beat-sync 1080p video editor. 100% browser, no install." },
     ],
@@ -504,6 +505,28 @@ function Editor() {
       }
 
       setProgress(1);
+      await waitForNextPaint();
+
+      // ── NEURAL AUTO-CUTOUT ──
+      // Photos ka background AI khud kaat leta hai, taaki bass hits par subject
+      // doosri photo ke background par apne-aap chipak jaaye.
+      setLog("AI photo background अपने आप काट रहा है…");
+      await waitForNextPaint();
+      let cutouts: CutoutMap = new Map();
+      try {
+        cutouts = await prepareCutouts(photos, {
+          max: Math.min(4, photos.length),
+          budgetMs: 45_000,
+          targetMax: Math.round(Math.max(W, H) * 0.7),
+          onProgress: (done, total) => {
+            setLog(`AI background कट रहा है… (${done}/${total})`);
+          },
+        });
+      } catch (error) {
+        console.warn("[Raja AI] cutout stage skipped", error);
+      }
+      if (renderIdRef.current !== myId) return;
+
       setLog("✓ Photo sync complete — GENERATE दबाएँ, फिर rendering शुरू होगा।");
       await waitForNextPaint();
       setStage("synced");
@@ -565,11 +588,20 @@ function Editor() {
       };
 
       type DrawImg = CanvasImageSource & { width: number; height: number };
-      const seq: { img: DrawImg }[] = [];
+      const seq: { img: DrawImg; idx: number }[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        seq.push({ img: imgs[idx] });
+        seq.push({ img: imgs[idx], idx });
+      }
+      // Har 3rd strong-bass segment par "photo merge" (cutout composite) chalega
+      const mergeSegments = new Set<number>();
+      if (cutouts.size > 0) {
+        let hit = 0;
+        for (let i = 1; i < segments; i++) {
+          if (!cutouts.has(seq[i].idx)) continue;
+          if (++hit % 3 === 0) mergeSegments.add(i);
+        }
       }
 
       const canvas = document.createElement("canvas");
@@ -672,7 +704,24 @@ function Editor() {
           if (nextItem) drawFrame(ctx, nextItem.img, W, H, { zoom: Math.max(1, nextZoom), rotation: 0, alpha: 0.4 + smoothProgress * 0.6, blurBackground: true, clear: false });
         } else {
           const item = seq[Math.min(i, seq.length - 1)];
-          if (item) drawFrame(ctx, item.img, W, H, { zoom: Math.min(1.15, pulseZoom), rotation, alpha: 1, blurBackground: true, clear: true });
+          const cut = item ? cutouts.get(item.idx) : undefined;
+          if (item && cut && mergeSegments.has(i)) {
+            const bgItem = seq[Math.max(0, i - 1)];
+            ctx.save();
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+            drawCutoutComposite(
+              ctx,
+              bgItem.img,
+              cut as unknown as DrawImg,
+              W,
+              H,
+              { pop: 1 + 0.1 * easeInOutQuint(energy), energy, drift: Math.sin(local * Math.PI * 2) },
+            );
+          } else if (item) {
+            drawFrame(ctx, item.img, W, H, { zoom: Math.min(1.15, pulseZoom), rotation, alpha: 1, blurBackground: true, clear: true });
+          }
         }
         if (flashAlpha > 0) {
           ctx.save();
@@ -709,6 +758,7 @@ function Editor() {
       URL.revokeObjectURL(audioUrl);
       imageUrls.forEach((u) => URL.revokeObjectURL(u));
       bitmaps.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
+      cutouts.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
       if (renderIdRef.current !== myId) return;
 
       setPhase("encode");
@@ -844,10 +894,10 @@ function Editor() {
               🎬 Step 3 — मोड चुनें
             </h2>
             <div className="grid grid-cols-2 gap-3">
-              <ModeCard active={mode === "shorts"} title="Shorts" sub="15–60s • 9:16"
+              <ModeCard active={mode === "shorts"} title="Vertical" sub="9:16 • 15–60s"
                 onClick={() => setMode("shorts")} />
-              <ModeCard active={mode === "long"} title="Long Video"
-                sub={`Max ${LONG_MAX_SEC}s • 16:9${beats.duration > LONG_MAX_SEC ? " • chunks" : ""}`}
+              <ModeCard active={mode === "long"} title="Wide Cinematic"
+                sub={`16:9 • Max ${LONG_MAX_SEC}s${beats.duration > LONG_MAX_SEC ? " • chunks" : ""}`}
                 onClick={() => setMode("long")} />
             </div>
             {mode === "long" && beats.duration > LONG_MAX_SEC && (
@@ -899,7 +949,7 @@ function Editor() {
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
               {exporting ? "Exporting…" : "Export"}
             </button>
-            <button type="button" disabled={stage === "rendering"}
+            <button type="button"
               onClick={() => void doReEdit()}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 py-4 text-base font-black text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
               Improve / Re-edit
