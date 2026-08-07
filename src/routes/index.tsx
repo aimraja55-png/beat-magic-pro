@@ -674,27 +674,35 @@ function Editor() {
     try {
       // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
       // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
-      const targetMax = Math.max(W, H) * 1.25;
-      const imgs = await Promise.all(
-        photos.map(async (f) => {
-          try {
-            const bmp = await createImageBitmap(f, {
-              resizeWidth: targetMax,
-              resizeQuality: "high",
-            } as ImageBitmapOptions);
-            bitmaps.push(bmp);
-            return bmp as unknown as CanvasImageSource & { width: number; height: number };
-          } catch {
-            // Fallback for browsers that reject resize option
-            return await new Promise<HTMLImageElement>((res, rej) => {
-              const i = new Image();
-              const u = URL.createObjectURL(f);
-              imageUrls.push(u);
-              i.onload = () => res(i); i.onerror = rej; i.src = u;
-            });
-          }
-        }),
-      );
+      const targetMax = Math.max(W, H) * (lowEnd ? 1.0 : 1.25);
+      const decodeOne = async (f: File) => {
+        try {
+          const bmp = await createImageBitmap(f, {
+            resizeWidth: targetMax,
+            resizeQuality: lowEnd ? "medium" : "high",
+          } as ImageBitmapOptions);
+          bitmaps.push(bmp);
+          return bmp as unknown as CanvasImageSource & { width: number; height: number };
+        } catch {
+          // Fallback for browsers that reject resize option
+          return await new Promise<HTMLImageElement>((res, rej) => {
+            const i = new Image();
+            const u = URL.createObjectURL(f);
+            imageUrls.push(u);
+            i.onload = () => res(i); i.onerror = rej; i.src = u;
+          });
+        }
+      };
+      // Decode in small chunks (2 at a time) instead of all-at-once — keeps peak RAM
+      // low on cheap devices so Chrome never hits "Aw, Snap!".
+      const imgs: (CanvasImageSource & { width: number; height: number })[] = [];
+      const batch = lowEnd ? 1 : 2;
+      for (let i = 0; i < photos.length; i += batch) {
+        const part = await Promise.all(photos.slice(i, i + batch).map(decodeOne));
+        imgs.push(...part);
+        setLog(`फोटो तैयार हो रही हैं… ${Math.min(photos.length, i + batch)}/${photos.length}`);
+        await waitForNextPaint(); // yield → UI never freezes during decode
+      }
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
