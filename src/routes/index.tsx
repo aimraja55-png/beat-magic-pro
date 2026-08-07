@@ -505,6 +505,28 @@ function Editor() {
       }
 
       setProgress(1);
+      await waitForNextPaint();
+
+      // ── NEURAL AUTO-CUTOUT ──
+      // Photos ka background AI khud kaat leta hai, taaki bass hits par subject
+      // doosri photo ke background par apne-aap chipak jaaye.
+      setLog("AI photo background अपने आप काट रहा है…");
+      await waitForNextPaint();
+      let cutouts: CutoutMap = new Map();
+      try {
+        cutouts = await prepareCutouts(photos, {
+          max: Math.min(4, photos.length),
+          budgetMs: 45_000,
+          targetMax: Math.round(Math.max(W, H) * 0.7),
+          onProgress: (done, total) => {
+            setLog(`AI background कट रहा है… (${done}/${total})`);
+          },
+        });
+      } catch (error) {
+        console.warn("[Raja AI] cutout stage skipped", error);
+      }
+      if (renderIdRef.current !== myId) return;
+
       setLog("✓ Photo sync complete — GENERATE दबाएँ, फिर rendering शुरू होगा।");
       await waitForNextPaint();
       setStage("synced");
@@ -566,11 +588,20 @@ function Editor() {
       };
 
       type DrawImg = CanvasImageSource & { width: number; height: number };
-      const seq: { img: DrawImg }[] = [];
+      const seq: { img: DrawImg; idx: number }[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        seq.push({ img: imgs[idx] });
+        seq.push({ img: imgs[idx], idx });
+      }
+      // Har 3rd strong-bass segment par "photo merge" (cutout composite) chalega
+      const mergeSegments = new Set<number>();
+      if (cutouts.size > 0) {
+        let hit = 0;
+        for (let i = 1; i < segments; i++) {
+          if (!cutouts.has(seq[i].idx)) continue;
+          if (++hit % 3 === 0) mergeSegments.add(i);
+        }
       }
 
       const canvas = document.createElement("canvas");
@@ -673,7 +704,24 @@ function Editor() {
           if (nextItem) drawFrame(ctx, nextItem.img, W, H, { zoom: Math.max(1, nextZoom), rotation: 0, alpha: 0.4 + smoothProgress * 0.6, blurBackground: true, clear: false });
         } else {
           const item = seq[Math.min(i, seq.length - 1)];
-          if (item) drawFrame(ctx, item.img, W, H, { zoom: Math.min(1.15, pulseZoom), rotation, alpha: 1, blurBackground: true, clear: true });
+          const cut = item ? cutouts.get(item.idx) : undefined;
+          if (item && cut && mergeSegments.has(i)) {
+            const bgItem = seq[Math.max(0, i - 1)];
+            ctx.save();
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+            drawCutoutComposite(
+              ctx,
+              bgItem.img,
+              cut as unknown as DrawImg,
+              W,
+              H,
+              { pop: 1 + 0.1 * easeInOutQuint(energy), energy, drift: Math.sin(local * Math.PI * 2) },
+            );
+          } else if (item) {
+            drawFrame(ctx, item.img, W, H, { zoom: Math.min(1.15, pulseZoom), rotation, alpha: 1, blurBackground: true, clear: true });
+          }
         }
         if (flashAlpha > 0) {
           ctx.save();
@@ -710,6 +758,7 @@ function Editor() {
       URL.revokeObjectURL(audioUrl);
       imageUrls.forEach((u) => URL.revokeObjectURL(u));
       bitmaps.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
+      cutouts.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
       if (renderIdRef.current !== myId) return;
 
       setPhase("encode");
