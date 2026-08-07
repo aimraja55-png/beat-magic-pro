@@ -671,6 +671,7 @@ function Editor() {
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
+    let heapTimer: ReturnType<typeof setInterval> | null = null;
     try {
       // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
       // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
@@ -828,7 +829,7 @@ function Editor() {
       const perfMem = (performance as Performance & {
         memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
       }).memory;
-      const heapCheck = setInterval(() => {
+      const heapCheck = heapTimer = setInterval(() => {
         if (!perfMem) return;
         const used = perfMem.usedJSHeapSize / Math.max(1, perfMem.jsHeapSizeLimit);
         if (used > 0.72 && !lowPower) {
@@ -928,6 +929,9 @@ function Editor() {
       }
       setTimeout(() => setCelebrate(false), 3500);
     } catch (error) {
+      if (heapTimer) clearInterval(heapTimer);
+      bitmaps.forEach((b) => { try { b.close(); } catch { /* ignore */ } });
+      imageUrls.forEach((u) => URL.revokeObjectURL(u));
       if (renderIdRef.current !== myId) return;
       const msg = error instanceof Error ? error.message : String(error);
       setStage("ready"); setPhase(""); setProgress(0);
