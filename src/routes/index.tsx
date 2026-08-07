@@ -29,7 +29,7 @@ type Beats = {
   bpm: number;
   duration: number;
 };
-type Stage = "idle" | "analyzing" | "ready" | "syncing" | "synced" | "ad" | "rendering" | "done";
+type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
 type QualityKey = "480p" | "720p" | "1080p" | "4k";
 type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
 const QUALITIES: Record<QualityKey, QualityCfg> = {
@@ -230,11 +230,11 @@ function getBestRecorderMime() {
 }
 
 /* ---------------- Cinematic Effects ---------------- */
-type ImageBitmapResizeQuality = "low" | "medium" | "high";
 type StylePack = {
-  base: "punchIn" | "punchOut" | "whipPan" | "dolly" | "parallax3D" | "smoothPan";
-  entry: "slideL" | "slideR" | "slideU" | "slideD" | "zoomIn" | "glitchIn" | "shatterIn";
-  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "zoomOut" | "none";
+  base: "kenburns" | "punchIn" | "punchOut" | "orbit" | "tiltShake" | "whipPan" | "dolly" | "handheld" | "parallax3D" | "spiralZoom" | "dutchAngle" | "smoothPan" | "layerPeel3D" | "liquidWarp" | "photoMerge";
+  entry: "slideL" | "slideR" | "slideU" | "slideD" | "irisIn" | "zoomIn" | "blurIn" | "spinIn" | "glitchIn" | "chromaIn" | "fadeIn" | "liquidIn" | "shatterIn";
+  exit:  "slideL" | "slideR" | "slideU" | "slideD" | "irisOut" | "zoomOut" | "blurOut" | "fadeOut" | "liquidOut" | "none";
+  filter: "none" | "warm" | "cool" | "noir" | "sepia" | "tealOrange" | "bleach" | "neon" | "vhs";
   panX: number; panY: number; rotDir: number; seed: number;
 };
 function mulberry32(a: number) {
@@ -248,16 +248,15 @@ function mulberry32(a: number) {
 function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<string> = new Set(), intensity: "chill" | "normal" | "aggressive" = "normal"): StylePack {
   const rand = mulberry32(seed);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
-  const allBases = intensity === "chill"
-    ? ["smoothPan", "parallax3D", "dolly"] as const
-    : ["punchIn","punchOut","whipPan","dolly","smoothPan","parallax3D"] as const;
-  const allEntries = intensity === "chill"
-    ? ["slideL","slideR","slideU","slideD","zoomIn"] as const
-    : ["slideL","slideR","slideU","slideD","zoomIn","glitchIn","shatterIn"] as const;
-  const allExits = ["slideL","slideR","slideU","slideD","zoomOut","none"] as const;
-  const bases = allBases;
+  const allBases = ["kenburns","punchIn","punchOut","orbit","tiltShake","whipPan","dolly","handheld","parallax3D","spiralZoom","dutchAngle","smoothPan","layerPeel3D","liquidWarp","photoMerge"] as const;
+  const allEntries = ["slideL","slideR","slideU","slideD","irisIn","zoomIn","blurIn","spinIn","glitchIn","chromaIn","fadeIn","liquidIn","shatterIn"] as const;
+  const allExits = ["slideL","slideR","slideU","slideD","irisOut","zoomOut","blurOut","fadeOut","liquidOut","none"] as const;
+  const calmBases = ["kenburns","smoothPan","parallax3D","dolly","orbit","liquidWarp"] as const;
+  const wildBases = ["punchIn","punchOut","tiltShake","whipPan","handheld","spiralZoom","dutchAngle","layerPeel3D","photoMerge"] as const;
+  const bases = intensity === "chill" ? calmBases : intensity === "aggressive" ? wildBases : allBases;
   const entries = allEntries;
   const exits = allExits;
+  const filters = ["none","none","warm","cool","noir","sepia","tealOrange","bleach","neon","vhs"] as const;
   const recentBases = new Set(recent.slice(-4).map(s => s.base));
   const recentEntries = new Set(recent.slice(-4).map(s => s.entry));
   const recentExits = new Set(recent.slice(-4).map(s => s.exit));
@@ -269,24 +268,225 @@ function pickStylePack(seed: number, recent: StylePack[] = [], banned: Set<strin
   const base = pickUnique(bases, recentBases);
   const entry = pickUnique(entries, recentEntries);
   const exit = pickUnique(exits, recentExits);
-  return { base, entry, exit, panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
+  return { base, entry, exit, filter: pick(filters), panX: rand() * 2 - 1, panY: rand() * 2 - 1, rotDir: rand() > 0.5 ? 1 : -1, seed };
 }
 const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 
 function drawFrame(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
+  style: StylePack, progress: number, punch: number, flash: number, shimmer: number,
 ) {
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, W, H);
-  const scale = Math.min(W / img.width, H / img.height);
-  const dw = img.width * scale;
-  const dh = img.height * scale;
-  const dx = (W - dw) / 2;
-  const dy = (H - dh) / 2;
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  let filter = "";
+  if (style.filter === "warm") filter = "saturate(1.15) hue-rotate(-10deg) contrast(1.08)";
+  else if (style.filter === "cool") filter = "saturate(1.1) hue-rotate(12deg) contrast(1.05)";
+  else if (style.filter === "noir") filter = "grayscale(0.85) contrast(1.25) brightness(0.95)";
+  else if (style.filter === "sepia") filter = "sepia(0.55) contrast(1.1)";
+  else if (style.filter === "tealOrange") filter = "saturate(1.25) hue-rotate(-6deg) contrast(1.15)";
+  else if (style.filter === "bleach") filter = "saturate(0.55) contrast(1.25) brightness(1.05)";
+  else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
+  else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
+
+  const baseScale = Math.max(W / img.width, H / img.height);
+  let scale = baseScale; let dx = 0, dy = 0, rot = 0;
+  const eased = EASE(progress);
+
+  switch (style.base) {
+    case "kenburns":
+      scale *= 1.05 + 0.12 * eased + 0.18 * punch;
+      dx = style.panX * 60 * eased; dy = style.panY * 40 * eased; break;
+    case "punchIn": scale *= 1 + 0.25 * eased + 0.28 * punch; break;
+    case "punchOut": scale *= 1.3 - 0.25 * eased + 0.2 * punch; break;
+    case "orbit":
+      scale *= 1.08 + 0.1 * punch;
+      rot = style.rotDir * 0.08 * (eased - 0.5);
+      dx = Math.sin(progress * Math.PI) * 40 * style.panX; break;
+    case "tiltShake": {
+      scale *= 1.03 + 0.18 * punch;
+      rot = style.rotDir * (0.02 + 0.05 * punch);
+      const amp = punch > 0.35 ? 45 * (punch - 0.3) : 0;
+      dx = (Math.random() - 0.5) * amp; dy = (Math.random() - 0.5) * amp; break;
+    }
+    case "whipPan": scale *= 1.05; dx = (progress - 0.5) * W * 0.6 * style.rotDir; break;
+    case "dolly": scale *= 1 + 0.35 * eased + 0.25 * punch; dy = -eased * 30; break;
+    case "handheld": {
+      scale *= 1.04 + 0.14 * punch;
+      const t = progress * Math.PI * 4;
+      const jitter = punch > 0.35 ? 24 * (punch - 0.3) : 0;
+      dx = Math.sin(t + style.seed) * 8 + (Math.random() - 0.5) * jitter;
+      dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
+      rot = Math.sin(t * 0.4) * 0.015; break;
+    }
+    case "parallax3D": {
+      scale *= 1.1 + 0.08 * eased + 0.15 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t) * 55 * style.panX;
+      dy = Math.cos(t * 0.7) * 30 * style.panY;
+      rot = style.rotDir * 0.03 * Math.sin(t); break;
+    }
+    case "spiralZoom": {
+      scale *= 1 + 0.28 * eased + 0.2 * punch;
+      const t = progress * Math.PI * 2;
+      rot = style.rotDir * eased * 0.25;
+      dx = Math.sin(t) * 20; dy = Math.cos(t) * 20; break;
+    }
+    case "dutchAngle": {
+      scale *= 1.08 + 0.12 * eased + 0.18 * punch;
+      rot = style.rotDir * (0.05 + 0.03 * eased);
+      dx = style.panX * 40 * eased; break;
+    }
+    case "smoothPan": {
+      // Calm ease-in-out pan for soft passages — no shake, no bass amplification
+      scale *= 1.04 + 0.08 * eased;
+      dx = style.panX * 80 * eased; dy = style.panY * 50 * eased; break;
+    }
+    case "layerPeel3D": {
+      // Fake 3D: perspective-like x-skew via horizontal squeeze + rotate
+      scale *= 1.08 + 0.1 * eased + 0.15 * punch;
+      rot = style.rotDir * (0.02 + 0.06 * eased);
+      dx = style.panX * 90 * (0.5 - Math.abs(0.5 - eased)); break;
+    }
+    case "liquidWarp": {
+      // Gentle sinusoidal drift — feels like liquid
+      scale *= 1.06 + 0.06 * eased + 0.12 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t + style.seed * 0.01) * 35;
+      dy = Math.cos(t * 0.6 + style.seed * 0.01) * 22;
+      rot = Math.sin(t * 0.5) * 0.02 * style.rotDir; break;
+    }
+    case "photoMerge": {
+      // Base draw is smooth; overlay effect done later as picture-in-picture
+      scale *= 1.05 + 0.1 * eased + 0.12 * punch;
+      dx = style.panX * 30 * eased; dy = style.panY * 20 * eased; break;
+    }
+  }
+  if (punch > 0.55 && style.base !== "smoothPan") {
+    const amp = 20 * (punch - 0.5);
+    dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
+  }
+  let entryAlpha = 1;
+  if (progress < 0.25) {
+    const p = progress / 0.25; const inv = 1 - EASE(p); entryAlpha = EASE(p);
+    switch (style.entry) {
+      case "slideL": dx -= W * 0.6 * inv; break;
+      case "slideR": dx += W * 0.6 * inv; break;
+      case "slideU": dy -= H * 0.6 * inv; break;
+      case "slideD": dy += H * 0.6 * inv; break;
+      case "zoomIn": scale *= 0.6 + 0.4 * EASE(p); break;
+      case "spinIn": rot += inv * 0.8 * style.rotDir; scale *= 0.6 + 0.4 * EASE(p); break;
+      case "irisIn": break;
+      case "blurIn": filter = (filter + ` blur(${inv * 14}px)`).trim(); break;
+      case "glitchIn": dx += (Math.random() - 0.5) * 40 * inv; dy += (Math.random() - 0.5) * 20 * inv; break;
+      case "chromaIn": filter = (filter + ` saturate(${1 + inv * 0.8})`).trim(); break;
+      case "fadeIn": /* alpha handled above */ break;
+      case "liquidIn": {
+        // Liquid ripple = strong blur decaying + slight vertical wobble
+        filter = (filter + ` blur(${inv * 18}px) saturate(${1 + inv * 0.6})`).trim();
+        dy += Math.sin(progress * Math.PI * 6) * 12 * inv; break;
+      }
+      case "shatterIn": {
+        // Random offset that snaps into place (glass shatter re-assembling)
+        const jitter = inv * 60;
+        dx += (Math.sin(style.seed) * 0.5 + 0.5 - 0.5) * jitter;
+        dy += (Math.cos(style.seed * 1.3) * 0.5 + 0.5 - 0.5) * jitter;
+        rot += inv * 0.12 * style.rotDir; break;
+      }
+    }
+  }
+  if (progress > 0.8 && style.exit !== "none") {
+    const p = (progress - 0.8) / 0.2; const e = EASE(p);
+    switch (style.exit) {
+      case "slideL": dx -= W * 0.5 * e; break;
+      case "slideR": dx += W * 0.5 * e; break;
+      case "slideU": dy -= H * 0.5 * e; break;
+      case "slideD": dy += H * 0.5 * e; break;
+      case "zoomOut": scale *= 1 + 0.35 * e; entryAlpha *= 1 - e * 0.6; break;
+      case "blurOut": filter = (filter + ` blur(${e * 12}px)`).trim(); break;
+      case "irisOut": break;
+      case "fadeOut": entryAlpha *= 1 - e * 0.75; break;
+      case "liquidOut": {
+        filter = (filter + ` blur(${e * 16}px) saturate(${1 + e * 0.6})`).trim();
+        dy += Math.sin(progress * Math.PI * 6) * 14 * e; entryAlpha *= 1 - e * 0.4; break;
+      }
+    }
+  }
+  const dw = img.width * scale; const dh = img.height * scale;
+  const needIris = (style.entry === "irisIn" && progress < 0.25) || (style.exit === "irisOut" && progress > 0.8);
   ctx.save();
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, dx, dy, dw, dh);
+  if (needIris) {
+    let r: number;
+    if (style.entry === "irisIn" && progress < 0.25) {
+      const p = progress / 0.25; r = EASE(p) * Math.hypot(W, H) * 0.7;
+    } else {
+      const p = (progress - 0.8) / 0.2; r = (1 - EASE(p)) * Math.hypot(W, H) * 0.7;
+    }
+    ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.max(1, r), 0, Math.PI * 2); ctx.clip();
+  }
+  ctx.filter = filter || "none";
+  ctx.globalAlpha = entryAlpha;
+  const trails = Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
+  for (let k = trails; k >= 1; k--) {
+    const f = k / trails;
+    ctx.globalAlpha = entryAlpha * (0.14 + 0.15 * (1 - f));
+    ctx.save();
+    ctx.translate(W / 2 + dx * (1 - f * 0.4), H / 2 + dy * (1 - f * 0.4));
+    if (rot) ctx.rotate(rot * (1 - f * 0.3));
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
+  }
+  ctx.globalAlpha = entryAlpha;
+  ctx.save();
+  ctx.translate(W / 2 + dx, H / 2 + dy);
+  if (rot) ctx.rotate(rot);
+  ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
+  ctx.filter = "none"; ctx.globalAlpha = 1;
+  if (shimmer > 0.25) {
+    ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.35 * shimmer;
+    const s = 10 * shimmer;
+    ctx.drawImage(img, W / 2 - dw / 2 + s + dx, H / 2 - dh / 2 + dy, dw, dh);
+    ctx.globalAlpha = 0.35 * shimmer;
+    ctx.drawImage(img, W / 2 - dw / 2 - s + dx, H / 2 - dh / 2 + dy, dw, dh);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+  }
+  if (punch > 0.55) {
+    ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.5 * punch;
+    ctx.drawImage(img, W / 2 - dw / 2 + 22 * punch + dx, H / 2 - dh / 2 + dy, dw, dh);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+  }
+  ctx.restore();
+  // photoMerge: picture-in-picture inset of the same image as an accent
+  if (style.base === "photoMerge") {
+    const insetW = W * 0.36;
+    const insetH = insetW * (img.height / img.width);
+    const ix = W - insetW - W * 0.06 + Math.sin(progress * Math.PI) * 12;
+    const iy = H - insetH - H * 0.08;
+    const insetAlpha = 0.85 * (0.7 + 0.3 * Math.sin(progress * Math.PI));
+    ctx.save();
+    ctx.globalAlpha = insetAlpha;
+    ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = Math.max(2, W * 0.003);
+    ctx.shadowColor = "rgba(255,46,136,0.7)"; ctx.shadowBlur = 24;
+    ctx.strokeRect(ix - 2, iy - 2, insetW + 4, insetH + 4);
+    ctx.shadowBlur = 0;
+    ctx.filter = filter || "none";
+    ctx.drawImage(img, ix, iy, insetW, insetH);
+    ctx.restore();
+  }
+  if (flash > 0.35) {
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (shimmer > 0.15) {
+    ctx.globalAlpha = 0.06 + shimmer * 0.05;
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
+      ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
 function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number) {
@@ -311,9 +511,7 @@ function Editor() {
   const [slots, setSlots] = useState<(File | null)[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState<"sync" | "record" | "encode" | "">("");
-  const [syncCount, setSyncCount] = useState(0);
-  const [syncTotal, setSyncTotal] = useState(0);
+  const [phase, setPhase] = useState<"record" | "encode" | "">("");
   const [log, setLog] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
@@ -333,7 +531,6 @@ function Editor() {
   const [quality, setQuality] = useState<QualityKey>("1080p");
 
   const renderIdRef = useRef(0);
-  const continueRenderRef = useRef<(() => void) | null>(null);
 
   const photosNeeded = beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
   const filledCount = slots.filter(Boolean).length;
@@ -403,8 +600,14 @@ function Editor() {
     const ext = videoMime.includes("webm") ? "webm" : "mp4";
     const filename = `raja-ai-video.${ext}`;
     try {
-      autoDownload(videoUrl, filename);
-      setLog("✓ Export started — देखें अपने Downloads में।");
+      const handle = await requestOutputFileHandle(filename, videoMime, ext);
+      if (handle) {
+        await saveWithFileHandle(handle, videoBlob);
+        setLog("✓ वीडियो सेव हो गया!");
+      } else {
+        autoDownload(videoUrl, filename);
+        setLog("✓ डाउनलोड शुरू हो गया!");
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       setLog(`Export error: ${msg}`);
@@ -428,39 +631,21 @@ function Editor() {
   function confirmQuality(q: QualityKey) {
     setQuality(q);
     setQualityOpen(false);
-    void doRender(true);
+    if (!pro) setStage("ad");
+    else void doRender();
   }
 
-  async function doReEdit() {
-    if (!audioFile || !beats || filledCount === 0) return;
-    setStage("syncing");
-    setPhase("sync");
-    setProgress(0.01);
-    setSyncCount(0);
-    setSyncTotal(filledCount);
-    setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
-    setLog("Re-editing started — Photo sync and sharper cuts तैयार हो रहे हैं…");
-    await waitForNextPaint();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await doRender(true);
-  }
-
-  async function doRender(autoStart = false) {
+  async function doRender() {
     if (!audioFile || !beats) return;
     const photos = slots.filter(Boolean) as File[];
     if (photos.length === 0) return;
 
     const myId = ++renderIdRef.current;
-    continueRenderRef.current = null;
-    setStage("syncing");
-    setPhase("sync");
-    setProgress(0.01);
-    setSyncCount(0);
-    setSyncTotal(photos.length);
+    setStage("rendering");
+    setProgress(0);
+    setPhase("record");
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
-    setLog(`Photo syncing 0/${photos.length}…`);
-    await waitForNextPaint();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    setLog("रेंडर शुरू…");
 
     // Adaptive: user-chosen quality, downgraded on low-end devices to avoid Aw-Snap
     const nav = navigator as Navigator & { deviceMemory?: number };
@@ -487,59 +672,27 @@ function Editor() {
     try {
       // Pre-decode & downscale off the main thread (createImageBitmap) — saves RAM,
       // avoids main-thread decode hitches, and prevents Aw-Snap on cheap devices.
-      setLog("Photo syncing जारी है…");
-      await waitForNextPaint();
-
-      const targetMax = Math.max(W, H) * 1.1;
-      const resizeQuality = W >= 2160 ? "medium" : "high";
-      const imgs: Array<CanvasImageSource & { width: number; height: number }> = [];
-      for (let idx = 0; idx < photos.length; idx++) {
-        const f = photos[idx];
-        setSyncCount(idx + 1);
-        setLog(`Photo सिंक किया जा रहा है… (${idx + 1}/${photos.length})`);
-        setProgress((idx + 1) / photos.length);
-        await waitForNextPaint();
-        try {
-          const bmp = await createImageBitmap(f, {
-            resizeWidth: targetMax,
-            resizeHeight: targetMax,
-            resizeQuality: resizeQuality as ImageBitmapResizeQuality,
-            imageOrientation: "from-image",
-          } as ImageBitmapOptions);
-          bitmaps.push(bmp);
-          imgs.push(bmp as unknown as CanvasImageSource & { width: number; height: number });
-        } catch {
-          const img = await new Promise<HTMLImageElement>((res, rej) => {
-            const i = new Image();
-            const u = URL.createObjectURL(f);
-            imageUrls.push(u);
-            i.onload = () => res(i);
-            i.onerror = rej;
-            i.src = u;
-          });
-          imgs.push(img as unknown as CanvasImageSource & { width: number; height: number });
-        }
-      }
-
-      setProgress(1);
-      setLog("✓ Photo sync complete — GENERATE दबाएँ, फिर rendering शुरू होगा।");
-      await waitForNextPaint();
-      setStage("synced");
-      if (autoStart) {
-        await new Promise<void>((resolve) => { continueRenderRef.current = resolve; resolve(); });
-      } else {
-        await new Promise<void>((resolve) => {
-          continueRenderRef.current = resolve;
-        });
-      }
-      continueRenderRef.current = null;
-      if (renderIdRef.current !== myId) return;
-
-      setStage("rendering");
-      setPhase("record");
-      setLog("Audio तैयार — sharp rendering शुरू हो रहा है…");
-      setProgress(0.18);
-      await waitForNextPaint();
+      const targetMax = Math.max(W, H) * 1.25;
+      const imgs = await Promise.all(
+        photos.map(async (f) => {
+          try {
+            const bmp = await createImageBitmap(f, {
+              resizeWidth: targetMax,
+              resizeQuality: "high",
+            } as ImageBitmapOptions);
+            bitmaps.push(bmp);
+            return bmp as unknown as CanvasImageSource & { width: number; height: number };
+          } catch {
+            // Fallback for browsers that reject resize option
+            return await new Promise<HTMLImageElement>((res, rej) => {
+              const i = new Image();
+              const u = URL.createObjectURL(f);
+              imageUrls.push(u);
+              i.onload = () => res(i); i.onerror = rej; i.src = u;
+            });
+          }
+        }),
+      );
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
@@ -583,48 +736,47 @@ function Editor() {
       };
 
       type DrawImg = CanvasImageSource & { width: number; height: number };
-      const seq: { img: DrawImg }[] = [];
+      const seq: { img: DrawImg; style: StylePack }[] = [];
+      const recentStyles: StylePack[] = [];
+      // Zero-repetition memory across renders for this same audio file
+      const bannedStyles = new Set<string>(getUsedStyles(audioFile));
+      const usedThisRun: string[] = [];
       for (let i = 0; i < segments; i++) {
         const cycle = Math.floor(i / imgs.length);
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
-        seq.push({ img: imgs[idx] });
+        // seed varies with time so re-renders never draw the same combos
+        const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
+        let style = pickStylePack(seed, recentStyles, bannedStyles, intensity);
+        // Force smoothPan + fadeIn/fadeOut in calm passages
+        const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
+        if (isCalmAt(segMid)) {
+          const calmBases = ["smoothPan","kenburns","liquidWarp","parallax3D"] as const;
+          const calmEntries = ["fadeIn","liquidIn","blurIn"] as const;
+          const calmExits = ["fadeOut","liquidOut","blurOut"] as const;
+          const r = mulberry32(seed);
+          style = {
+            ...style,
+            base: calmBases[Math.floor(r() * calmBases.length)],
+            entry: calmEntries[Math.floor(r() * calmEntries.length)],
+            exit: calmExits[Math.floor(r() * calmExits.length)],
+          };
+        }
+        seq.push({ img: imgs[idx], style });
+        recentStyles.push(style);
+        usedThisRun.push(style.base, style.entry, style.exit);
+        if (recentStyles.length > 4) recentStyles.shift();
       }
+      // Persist so the NEXT render of this song picks fresh effects
+      pushUsedStyles(audioFile, usedThisRun);
 
       const canvas = document.createElement("canvas");
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext("2d")!;
 
-      setLog("Audio स्ट्रीम तैयार हो रही है…");
-      setProgress(0.18);
-      await waitForNextPaint();
-
       const audioUrl = URL.createObjectURL(audioFile);
       const audioEl = new Audio(audioUrl);
-      audioEl.preload = "auto";
       audioEl.crossOrigin = "anonymous";
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const done = () => {
-          if (settled) return; settled = true; cleanup(); resolve();
-        };
-        const fail = () => {
-          if (settled) return; settled = true; cleanup(); reject(new Error("Audio load failed"));
-        };
-        const cleanup = () => {
-          audioEl.onloadeddata = null;
-          audioEl.oncanplay = null;
-          audioEl.onerror = null;
-        };
-        audioEl.onloadeddata = done;
-        audioEl.oncanplay = done;
-        audioEl.onerror = fail;
-      });
-      setStage("rendering");
-      setPhase("record");
-      setLog("Audio तैयार — sharp rendering शुरू हो रहा है…");
-      setProgress(0.18);
-      await waitForNextPaint();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((r) => (audioEl.oncanplaythrough = r));
 
       const ac = new AudioContext();
       const src = ac.createMediaElementSource(audioEl);
@@ -645,10 +797,6 @@ function Editor() {
       rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
       const outMime = isMp4 ? "video/mp4" : "video/webm";
       const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: outMime }))));
-
-      setLog("Recording और Beat-sync शुरू हो रहा है…");
-      setProgress(0.26);
-      await waitForNextPaint();
 
       const recordStart = performance.now();
       rec.start(250);
@@ -673,7 +821,7 @@ function Editor() {
         const flash = beats.clapEnv[envIdx] ?? 0;
         const shimmer = beats.hatEnv[envIdx] ?? 0;
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer);
         if (drawWM) drawWatermark(ctx, W, H);
         setProgress(Math.min(0.95, (t / targetDuration) * 0.95));
         raf = requestAnimationFrame(render);
@@ -723,7 +871,7 @@ function Editor() {
       setVideoBlob(out); setVideoUrl(url); setVideoMime(outMime);
       setProgress(1); setPhase("");
       setStage("done"); setCelebrate(true);
-      setLog("✓ Preview तैयार है — Export बटन दबाएँ।");
+      setLog("✓ Preview तैयार है — SAVE दबाने पर ही डाउनलोड होगा.");
 
       // Update usage + persistent session
       bumpUsage(); setUsage(getUsageToday());
@@ -743,18 +891,7 @@ function Editor() {
   }
 
   const audioReady = !!beats && stage !== "analyzing";
-  const isGenerating = stage === "syncing" || stage === "synced" || stage === "rendering";
-  const canGenerate = audioReady && filledCount >= 1 && stage === "ready";
-  const buttonLabel = stage === "syncing"
-    ? "SYNCING…"
-    : stage === "synced"
-      ? "GENERATE ▶"
-      : stage === "rendering"
-        ? "RENDERING…"
-        : canGenerate
-          ? "GO ▶"
-          : "GO (पहले फोटो भरें)";
-  const buttonDisabled = !canGenerate;
+  const canGenerate = audioReady && filledCount >= 1 && stage !== "rendering";
 
   return (
     <div className="min-h-screen text-white" style={{
@@ -853,12 +990,12 @@ function Editor() {
         )}
 
         {/* STEP 4: GO */}
-        {beats && stage === "ready" && (
+        {beats && stage !== "rendering" && stage !== "done" && stage !== "ad" && (
           <div className="mt-6">
-            <button type="button" disabled={buttonDisabled}
-              onClick={() => { if (stage === "ready") void tryGenerate(); }}
+            <button type="button" disabled={!canGenerate}
+              onClick={() => void tryGenerate()}
               className="group relative block w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40">
-              <span className="relative z-10">{buttonLabel}</span>
+              <span className="relative z-10">{canGenerate ? "GO ▶" : "GO (पहले फोटो भरें)"}</span>
               <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
             </button>
             {remainingToday === 0 && (
@@ -869,11 +1006,13 @@ function Editor() {
           </div>
         )}
 
-        {/* Immediate render start; ad delay removed for faster UX */}
+        {stage === "ad" && (
+          <AdCountdown seconds={AD_SECONDS} onComplete={() => void doRender()}
+            onSkip={pro ? () => void doRender() : undefined} />
+        )}
 
-        {(stage === "rendering" || stage === "syncing" || stage === "synced") && (
-          <RenderingOverlay stage={stage} progress={progress} phase={phase} log={log} syncCount={syncCount} syncTotal={syncTotal}
-            onGenerate={() => { if (stage === "synced") continueRenderRef.current?.(); }} />
+        {stage === "rendering" && (
+          <RenderingOverlay progress={progress} phase={phase} log={log} />
         )}
 
         {stage === "done" && videoUrl && (
@@ -881,7 +1020,7 @@ function Editor() {
             <div className="mb-4 text-center">
               <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/50">Preview Ready</div>
               <h2 className="mt-2 text-2xl font-black">Video Preview</h2>
-              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर Export या Re-edit करें.</p>
+              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर SAVE / EXPORT दबाएँ.</p>
             </div>
             <video src={videoUrl} controls autoPlay muted={false} playsInline preload="auto"
               controlsList="nodownload nofullscreen noremoteplayback"
@@ -891,12 +1030,7 @@ function Editor() {
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
-              {exporting ? "Exporting…" : "Export"}
-            </button>
-            <button type="button" disabled={stage === "rendering"}
-              onClick={() => void doReEdit()}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 py-4 text-base font-black text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
-              Improve / Re-edit
+              {exporting ? "SAVING…" : "SAVE / EXPORT"}
             </button>
             <button onClick={() => { setStage("ready"); setVideoUrl(null); setVideoBlob(null); setProgress(0); }}
               className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10">
@@ -1245,43 +1379,42 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
   );
 }
 
-function RenderingOverlay({ stage, progress, phase, log, syncCount, syncTotal, onGenerate }: { stage: Stage; progress: number; phase: "sync" | "record" | "encode" | ""; log: string; syncCount: number; syncTotal: number; onGenerate?: () => void; }) {
-  const pct = Math.max(1, Math.min(100, Math.round(progress * 100)));
-  const isSync = stage === "syncing";
-  const isSynced = stage === "synced";
-  const title = isSync ? "Photo Syncing" : isSynced ? "Ready to Generate" : phase === "encode" ? "Exporting" : "Rendering";
-  const subtitle = isSync ? `Photos ${syncCount}/${syncTotal}` : isSynced ? `Ready to render with ${syncCount}/${syncTotal} photos` : phase === "encode" ? "Finalizing file" : "Sharp beat-sync action";
-
+function RenderingOverlay({ progress, phase, log }: { progress: number; phase: "record" | "encode" | ""; log: string }) {
+  const pct = Math.round(progress * 100);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4">
-      <div className="w-full max-w-md rounded-[28px] border border-white/15 bg-white/5 p-6 text-center shadow-[0_24px_120px_-48px_rgba(59,130,246,0.4)] backdrop-blur-xl">
-        <div className="flex items-center justify-center gap-3">
-          <Spinner size={36} />
-          <div className="text-xs font-black uppercase tracking-[0.4em] text-sky-100/70">PREMIUM RENDER</div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-2xl">
+      <div className="flex flex-col items-center">
+        <CircularSpinner percent={pct} />
+        <div className="mt-6 text-2xl font-black tracking-widest">प्रोसेसिंग…</div>
+        <div className="mt-2 text-xs uppercase tracking-[0.3em] text-white/60">
+          {phase === "encode" ? "Finalizing" : "Rendering Beats"}
         </div>
-        <div className="mt-4 text-3xl font-black tracking-tight text-white">{title}</div>
-        <div className="mt-2 text-sm uppercase tracking-[0.3em] text-slate-300">{subtitle}</div>
-        <div className="mt-6">
-          <RenderingProgress value={pct} />
-        </div>
-        <div className="mt-3 text-base font-black text-white">{pct}%</div>
-        {log && <div className="mt-3 max-w-[22rem] mx-auto text-center text-[11px] text-slate-300">{log}</div>}
-        {isSynced && onGenerate && (
-          <button type="button" onClick={onGenerate}
-            className="mt-6 inline-flex items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-black uppercase tracking-[0.24em] text-slate-900 transition hover:bg-slate-100">
-            GENERATE
-          </button>
-        )}
+        {log && <div className="mt-3 max-w-xs text-center text-[11px] text-white/50">{log}</div>}
       </div>
     </div>
   );
 }
 
-function RenderingProgress({ value }: { value: number }) {
+function CircularSpinner({ percent }: { percent: number }) {
+  const size = 160; const stroke = 10; const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r; const offset = c - (percent / 100) * c;
   return (
-    <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-white/15">
-      <div className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-white via-sky-300 to-blue-500 transition-all duration-300" style={{ width: `${value}%` }} />
-      <div className="absolute inset-0 rounded-full border border-white/20" />
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <defs>
+          <linearGradient id="sp" x1="0" x2="1">
+            <stop offset="0%" stopColor="#ff2e88" /><stop offset="100%" stopColor="#ffb347" />
+          </linearGradient>
+        </defs>
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} fill="none" />
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="url(#sp)" strokeWidth={stroke} fill="none"
+          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset}
+          style={{ transition: "stroke-dashoffset 0.3s ease" }} />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="text-3xl font-black">{percent}%</div>
+      </div>
+      <div className="absolute inset-0 -z-10 animate-pulse rounded-full bg-[#ff2e88]/20 blur-3xl" />
     </div>
   );
 }
