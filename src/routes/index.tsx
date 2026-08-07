@@ -900,7 +900,7 @@ function Editor() {
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
               {exporting ? "Exporting…" : "Export"}
             </button>
-            <button type="button" disabled={stage === "rendering"}
+            <button type="button"
               onClick={() => void doReEdit()}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 py-4 text-base font-black text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
               Improve / Re-edit
