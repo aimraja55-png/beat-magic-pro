@@ -287,7 +287,8 @@ function drawFrame(
   else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
   else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
 
-  const baseScale = Math.max(W / img.width, H / img.height);
+  // CONTAIN fit → photo never cropped or stretched; leftover frame stays solid black
+  const baseScale = Math.min(W / img.width, H / img.height);
   let scale = baseScale; let dx = 0, dy = 0, rot = 0;
   const eased = EASE(progress);
 
