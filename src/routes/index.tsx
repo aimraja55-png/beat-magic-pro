@@ -118,6 +118,80 @@ function classifyIntensity(kickEnv: Float32Array): "chill" | "normal" | "aggress
   return "normal";
 }
 
+/* -------- Sound-reactive helpers: sample + mood classification -------- */
+// Linear-interpolated envelope read → millisecond-accurate, no 10ms stair-stepping
+function sampleEnv(env: Float32Array, hop: number, t: number): number {
+  if (env.length === 0) return 0;
+  const x = t / hop;
+  const i = Math.floor(x);
+  if (i < 0) return env[0];
+  if (i >= env.length - 1) return env[env.length - 1];
+  const f = x - i;
+  return env[i] * (1 - f) + env[i + 1] * f;
+}
+type SegMood = "expand" | "drop" | "groove" | "calm";
+// Reads the actual audio slice this photo will live on and decides its character
+function segmentMood(
+  beats: Beats, tStart: number, tEnd: number,
+): { mood: SegMood; bass: number; slope: number; hats: number } {
+  const hop = beats.hop;
+  const a = Math.max(0, Math.floor(tStart / hop));
+  const b = Math.min(beats.kickEnv.length - 1, Math.floor(tEnd / hop));
+  const mid = Math.floor((a + b) / 2);
+  let bass = 0, clap = 0, hats = 0, n = 0, first = 0, nf = 0, second = 0, ns = 0, peak = 0;
+  for (let k = a; k <= b; k++) {
+    const kv = beats.kickEnv[k] ?? 0;
+    bass += kv; clap += beats.clapEnv[k] ?? 0; hats += beats.hatEnv[k] ?? 0; n++;
+    if (kv > peak) peak = kv;
+    if (k < mid) { first += kv; nf++; } else { second += kv; ns++; }
+  }
+  if (n === 0) return { mood: "groove", bass: 0, slope: 0, hats: 0 };
+  const bassMean = bass / n, clapMean = clap / n, hatMean = hats / n;
+  const slope = (ns ? second / ns : 0) - (nf ? first / nf : 0);
+  let mood: SegMood;
+  if (peak > 0.62 || bassMean > 0.34) mood = "drop";
+  else if (bassMean < 0.17 && clapMean < 0.18) mood = "calm";
+  else if (slope < -0.04 || (slope > -0.02 && slope < 0.03 && hatMean < 0.2)) mood = "expand";
+  else mood = "groove";
+  return { mood, bass: bassMean, slope, hats: hatMean };
+}
+// Every mood gets its own trendy visual vocabulary → no repeated look per photo
+function styleForMood(
+  mood: SegMood, seed: number, recent: StylePack[], banned: Set<string>,
+): StylePack {
+  const base = pickStylePack(seed, recent, banned, mood === "drop" ? "aggressive" : mood === "calm" ? "chill" : "normal");
+  const r = mulberry32(seed ^ 0x9e3779b9);
+  const pick = <T,>(arr: readonly T[]) => arr[Math.floor(r() * arr.length)];
+  const recentBases = new Set(recent.slice(-3).map((s) => s.base));
+  const choose = <T,>(arr: readonly T[]): T => {
+    const avail = arr.filter((a) => !recentBases.has(a as unknown as StylePack["base"]));
+    const pool = avail.length ? avail : arr;
+    return pool[Math.floor(r() * pool.length)];
+  };
+  if (mood === "drop") {
+    return { ...base,
+      base: choose(["punchIn","tiltShake","whipPan","spiralZoom","handheld","layerPeel3D"] as const),
+      entry: pick(["glitchIn","shatterIn","zoomIn","slideL","slideR","chromaIn"] as const),
+      exit: pick(["slideL","slideR","zoomOut","irisOut","liquidOut"] as const) };
+  }
+  if (mood === "expand") {
+    return { ...base,
+      base: choose(["punchOut","smoothPan","kenburns","dolly"] as const),
+      entry: pick(["fadeIn","blurIn","irisIn","liquidIn"] as const),
+      exit: pick(["fadeOut","blurOut","zoomOut","none"] as const) };
+  }
+  if (mood === "calm") {
+    return { ...base,
+      base: choose(["smoothPan","kenburns","liquidWarp","parallax3D"] as const),
+      entry: pick(["fadeIn","liquidIn","blurIn"] as const),
+      exit: pick(["fadeOut","liquidOut","blurOut"] as const) };
+  }
+  return { ...base,
+    base: choose(["orbit","parallax3D","dolly","kenburns","photoMerge","liquidWarp"] as const),
+    entry: pick(["slideU","slideD","irisIn","zoomIn","chromaIn","fadeIn"] as const),
+    exit: pick(["slideU","slideD","fadeOut","blurOut","none"] as const) };
+}
+
 /* ---------------- Beat detection ---------------- */
 async function renderBand(audio: AudioBuffer, type: BiquadFilterType, frequency: number, Q: number): Promise<Float32Array> {
   const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
@@ -287,7 +361,8 @@ function drawFrame(
   else if (style.filter === "neon") filter = "saturate(1.5) contrast(1.2) hue-rotate(6deg)";
   else if (style.filter === "vhs") filter = "saturate(1.2) contrast(1.1) hue-rotate(-4deg) brightness(1.02)";
 
-  const baseScale = Math.max(W / img.width, H / img.height);
+  // CONTAIN fit → photo never cropped or stretched; leftover frame stays solid black
+  const baseScale = Math.min(W / img.width, H / img.height);
   let scale = baseScale; let dx = 0, dy = 0, rot = 0;
   const eased = EASE(progress);
 
@@ -410,6 +485,8 @@ function drawFrame(
       }
     }
   }
+  // No forced rotation/tilt — photo geometry stays true (9:16 frame, black padding)
+  rot = 0;
   const dw = img.width * scale; const dh = img.height * scale;
   const needIris = (style.entry === "irisIn" && progress < 0.25) || (style.exit === "irisOut" && progress > 0.8);
   ctx.save();
@@ -757,21 +834,12 @@ function Editor() {
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
         // seed varies with time so re-renders never draw the same combos
         const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
-        let style = pickStylePack(seed, recentStyles, bannedStyles, intensity);
-        // Force smoothPan + fadeIn/fadeOut in calm passages
-        const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
-        if (isCalmAt(segMid)) {
-          const calmBases = ["smoothPan","kenburns","liquidWarp","parallax3D"] as const;
-          const calmEntries = ["fadeIn","liquidIn","blurIn"] as const;
-          const calmExits = ["fadeOut","liquidOut","blurOut"] as const;
-          const r = mulberry32(seed);
-          style = {
-            ...style,
-            base: calmBases[Math.floor(r() * calmBases.length)],
-            entry: calmEntries[Math.floor(r() * calmEntries.length)],
-            exit: calmExits[Math.floor(r() * calmExits.length)],
-          };
-        }
+        // ── SOUND-DRIVEN MOTION: read this exact audio slice, then pick its look ──
+        const segA = cutTimes[i] + startOffset;
+        const segB = cutTimes[i + 1] + startOffset;
+        const { mood } = segmentMood(beats, segA, segB);
+        const style = styleForMood(mood, seed, recentStyles, bannedStyles);
+        if (isCalmAt((segA + segB) / 2)) { /* mood already resolves calm passages */ }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
         usedThisRun.push(style.base, style.entry, style.exit);
@@ -859,10 +927,10 @@ function Editor() {
         const segStart = cutTimes[i]; const segEnd = cutTimes[i + 1];
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
-        const envIdx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(abs / beats.hop)));
-        const punch = beats.kickEnv[envIdx] ?? 0;
-        const flash = beats.clapEnv[envIdx] ?? 0;
-        const shimmer = beats.hatEnv[envIdx] ?? 0;
+        // Millisecond-locked, interpolated audio read → visuals hit exactly on the beat
+        const punch = sampleEnv(beats.kickEnv, beats.hop, abs);
+        const flash = sampleEnv(beats.clapEnv, beats.hop, abs);
+        const shimmer = sampleEnv(beats.hatEnv, beats.hop, abs);
         const item = seq[Math.min(i, seq.length - 1)];
         if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
         if (drawWM) drawWatermark(ctx, W, H);
