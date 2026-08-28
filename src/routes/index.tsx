@@ -118,6 +118,80 @@ function classifyIntensity(kickEnv: Float32Array): "chill" | "normal" | "aggress
   return "normal";
 }
 
+/* -------- Sound-reactive helpers: sample + mood classification -------- */
+// Linear-interpolated envelope read → millisecond-accurate, no 10ms stair-stepping
+function sampleEnv(env: Float32Array, hop: number, t: number): number {
+  if (env.length === 0) return 0;
+  const x = t / hop;
+  const i = Math.floor(x);
+  if (i < 0) return env[0];
+  if (i >= env.length - 1) return env[env.length - 1];
+  const f = x - i;
+  return env[i] * (1 - f) + env[i + 1] * f;
+}
+type SegMood = "expand" | "drop" | "groove" | "calm";
+// Reads the actual audio slice this photo will live on and decides its character
+function segmentMood(
+  beats: Beats, tStart: number, tEnd: number,
+): { mood: SegMood; bass: number; slope: number; hats: number } {
+  const hop = beats.hop;
+  const a = Math.max(0, Math.floor(tStart / hop));
+  const b = Math.min(beats.kickEnv.length - 1, Math.floor(tEnd / hop));
+  const mid = Math.floor((a + b) / 2);
+  let bass = 0, clap = 0, hats = 0, n = 0, first = 0, nf = 0, second = 0, ns = 0, peak = 0;
+  for (let k = a; k <= b; k++) {
+    const kv = beats.kickEnv[k] ?? 0;
+    bass += kv; clap += beats.clapEnv[k] ?? 0; hats += beats.hatEnv[k] ?? 0; n++;
+    if (kv > peak) peak = kv;
+    if (k < mid) { first += kv; nf++; } else { second += kv; ns++; }
+  }
+  if (n === 0) return { mood: "groove", bass: 0, slope: 0, hats: 0 };
+  const bassMean = bass / n, clapMean = clap / n, hatMean = hats / n;
+  const slope = (ns ? second / ns : 0) - (nf ? first / nf : 0);
+  let mood: SegMood;
+  if (peak > 0.62 || bassMean > 0.34) mood = "drop";
+  else if (bassMean < 0.17 && clapMean < 0.18) mood = "calm";
+  else if (slope < -0.04 || (slope > -0.02 && slope < 0.03 && hatMean < 0.2)) mood = "expand";
+  else mood = "groove";
+  return { mood, bass: bassMean, slope, hats: hatMean };
+}
+// Every mood gets its own trendy visual vocabulary → no repeated look per photo
+function styleForMood(
+  mood: SegMood, seed: number, recent: StylePack[], banned: Set<string>,
+): StylePack {
+  const base = pickStylePack(seed, recent, banned, mood === "drop" ? "aggressive" : mood === "calm" ? "chill" : "normal");
+  const r = mulberry32(seed ^ 0x9e3779b9);
+  const pick = <T,>(arr: readonly T[]) => arr[Math.floor(r() * arr.length)];
+  const recentBases = new Set(recent.slice(-3).map((s) => s.base));
+  const choose = <T,>(arr: readonly T[]): T => {
+    const avail = arr.filter((a) => !recentBases.has(a as unknown as StylePack["base"]));
+    const pool = avail.length ? avail : arr;
+    return pool[Math.floor(r() * pool.length)];
+  };
+  if (mood === "drop") {
+    return { ...base,
+      base: choose(["punchIn","tiltShake","whipPan","spiralZoom","handheld","layerPeel3D"] as const),
+      entry: pick(["glitchIn","shatterIn","zoomIn","slideL","slideR","chromaIn"] as const),
+      exit: pick(["slideL","slideR","zoomOut","irisOut","liquidOut"] as const) };
+  }
+  if (mood === "expand") {
+    return { ...base,
+      base: choose(["punchOut","smoothPan","kenburns","dolly"] as const),
+      entry: pick(["fadeIn","blurIn","irisIn","liquidIn"] as const),
+      exit: pick(["fadeOut","blurOut","zoomOut","none"] as const) };
+  }
+  if (mood === "calm") {
+    return { ...base,
+      base: choose(["smoothPan","kenburns","liquidWarp","parallax3D"] as const),
+      entry: pick(["fadeIn","liquidIn","blurIn"] as const),
+      exit: pick(["fadeOut","liquidOut","blurOut"] as const) };
+  }
+  return { ...base,
+    base: choose(["orbit","parallax3D","dolly","kenburns","photoMerge","liquidWarp"] as const),
+    entry: pick(["slideU","slideD","irisIn","zoomIn","chromaIn","fadeIn"] as const),
+    exit: pick(["slideU","slideD","fadeOut","blurOut","none"] as const) };
+}
+
 /* ---------------- Beat detection ---------------- */
 async function renderBand(audio: AudioBuffer, type: BiquadFilterType, frequency: number, Q: number): Promise<Float32Array> {
   const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
