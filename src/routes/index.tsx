@@ -834,21 +834,12 @@ function Editor() {
         const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
         // seed varies with time so re-renders never draw the same combos
         const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
-        let style = pickStylePack(seed, recentStyles, bannedStyles, intensity);
-        // Force smoothPan + fadeIn/fadeOut in calm passages
-        const segMid = (cutTimes[i] + cutTimes[i + 1]) / 2 + startOffset;
-        if (isCalmAt(segMid)) {
-          const calmBases = ["smoothPan","kenburns","liquidWarp","parallax3D"] as const;
-          const calmEntries = ["fadeIn","liquidIn","blurIn"] as const;
-          const calmExits = ["fadeOut","liquidOut","blurOut"] as const;
-          const r = mulberry32(seed);
-          style = {
-            ...style,
-            base: calmBases[Math.floor(r() * calmBases.length)],
-            entry: calmEntries[Math.floor(r() * calmEntries.length)],
-            exit: calmExits[Math.floor(r() * calmExits.length)],
-          };
-        }
+        // ── SOUND-DRIVEN MOTION: read this exact audio slice, then pick its look ──
+        const segA = cutTimes[i] + startOffset;
+        const segB = cutTimes[i + 1] + startOffset;
+        const { mood } = segmentMood(beats, segA, segB);
+        const style = styleForMood(mood, seed, recentStyles, bannedStyles);
+        if (isCalmAt((segA + segB) / 2)) { /* mood already resolves calm passages */ }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
         usedThisRun.push(style.base, style.entry, style.exit);
