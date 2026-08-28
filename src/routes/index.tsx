@@ -411,6 +411,8 @@ function drawFrame(
       }
     }
   }
+  // No forced rotation/tilt — photo geometry stays true (9:16 frame, black padding)
+  rot = 0;
   const dw = img.width * scale; const dh = img.height * scale;
   const needIris = (style.entry === "irisIn" && progress < 0.25) || (style.exit === "irisOut" && progress > 0.8);
   ctx.save();
