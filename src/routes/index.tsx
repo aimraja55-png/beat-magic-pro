@@ -928,9 +928,11 @@ function Editor() {
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
         const envIdx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(abs / beats.hop)));
-        const punch = beats.kickEnv[envIdx] ?? 0;
-        const flash = beats.clapEnv[envIdx] ?? 0;
-        const shimmer = beats.hatEnv[envIdx] ?? 0;
+        // Millisecond-locked, interpolated audio read → visuals hit exactly on the beat
+        const punch = sampleEnv(beats.kickEnv, beats.hop, abs);
+        const flash = sampleEnv(beats.clapEnv, beats.hop, abs);
+        const shimmer = sampleEnv(beats.hatEnv, beats.hop, abs);
+        void envIdx;
         const item = seq[Math.min(i, seq.length - 1)];
         if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
         if (drawWM) drawWatermark(ctx, W, H);
