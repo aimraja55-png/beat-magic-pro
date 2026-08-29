@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
+import { planEdit, type DirectorPlan } from "@/lib/director.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -52,7 +53,7 @@ const UPI_ID = "9263334055-4@ybl";
 const PRO_PRICE = 99;
 const UPI_LINK = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent("Raja AI Pro")}&am=${PRO_PRICE}&cu=INR&tn=${encodeURIComponent("Raja AI Pro Subscription")}`;
 const FREE_DAILY = 10;
-const LONG_MAX_SEC = 60;
+// Full-length export: video always matches the complete audio duration.
 const AD_SECONDS = 30;
 
 function todayKey() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`; }
@@ -608,15 +609,17 @@ function Editor() {
   const [photoPool, setPhotoPool] = useState<File[]>([]);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [quality, setQuality] = useState<QualityKey>("1080p");
+  const [aiPlan, setAiPlan] = useState<DirectorPlan | null>(null);
+  const [aiThinking, setAiThinking] = useState(false);
 
   const renderIdRef = useRef(0);
 
-  const photosNeeded = beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
+  const photosNeeded = aiPlan ? aiPlan.photoCount : beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
   const filledCount = slots.filter(Boolean).length;
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
   const remainingToday = Math.max(0, dailyLimit() - usage);
   const exactDurationSec = beats
-    ? (mode === "long" ? Math.min(LONG_MAX_SEC, beats.duration - sessionOffset) : beats.duration)
+    ? beats.duration
     : 0;
 
   useEffect(() => {
@@ -639,10 +642,42 @@ function Editor() {
     try {
       const b = await analyzeBeats(f);
       setBeats(b);
-      const need = Math.max(4, Math.ceil(b.times.length / 2));
+      let need = Math.max(4, Math.ceil(b.times.length / 2));
       setSlots(new Array(need).fill(null));
       setStage("ready");
       setLog(`✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • ${b.times.length} beats`);
+
+      // ── AI DIRECTOR: real AI engine decides photo count, vibe, grade & cut style ──
+      setAiThinking(true);
+      try {
+        const intensity = classifyIntensity(b.kickEnv);
+        const step = Math.max(1, Math.floor(b.times.length / 24));
+        const moodTimeline: string[] = [];
+        for (let i = 0; i + 1 < b.times.length; i += step) {
+          moodTimeline.push(segmentMood(b, b.times[i], b.times[i + 1]).mood);
+        }
+        const plan = await planEdit({
+          data: {
+            durationSec: Math.round(b.duration * 10) / 10,
+            bpm: b.bpm,
+            beatCount: b.times.length,
+            kickCount: b.kicks.length,
+            clapCount: b.claps.length,
+            hatCount: b.hats.length,
+            intensity,
+            moodTimeline: moodTimeline.slice(0, 60),
+          },
+        });
+        setAiPlan(plan);
+        need = plan.photoCount;
+        setSlots((prev) => {
+          const next = new Array(plan.photoCount).fill(null) as (File | null)[];
+          prev.forEach((file, i) => { if (file && i < next.length) next[i] = file; });
+          return next;
+        });
+      } catch (err) {
+        console.warn("[Raja AI] director plan failed", err);
+      } finally { setAiThinking(false); }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setStage("idle");
@@ -703,15 +738,13 @@ function Editor() {
       if (!pro) setShowLimitReached(true);
       return;
     }
-    // Show quality picker with exact duration; render begins after confirm
-    setQualityOpen(true);
+    // 2-tap flow: no extra modal — quality is already chosen inline
+    if (!pro) setStage("ad"); else void doRender();
   }
 
   function confirmQuality(q: QualityKey) {
     setQuality(q);
     setQualityOpen(false);
-    if (!pro) setStage("ad");
-    else void doRender();
   }
 
   async function doRender() {
@@ -740,11 +773,9 @@ function Editor() {
     const bitrate = cfg.bitrate;
     const drawWM = !pro; // watermark for free users
 
-    // Long-video: cap segment to 60s, resume from session offset
-    const startOffset = mode === "long" ? Math.min(sessionOffset, Math.max(0, beats.duration - 1)) : 0;
-    const targetDuration = mode === "long"
-      ? Math.min(LONG_MAX_SEC, beats.duration - startOffset)
-      : beats.duration;
+    // Full-length render: exact audio duration, no chunking
+    const startOffset = 0;
+    const targetDuration = beats.duration;
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
@@ -784,7 +815,10 @@ function Editor() {
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
-      const intensity = classifyIntensity(beats.kickEnv);
+      const localIntensity = classifyIntensity(beats.kickEnv);
+      const intensity: "chill" | "normal" | "aggressive" = aiPlan
+        ? (aiPlan.cutStyle === "rapid" ? "aggressive" : aiPlan.cutStyle === "slow" ? "chill" : "normal")
+        : localIntensity;
       // Only cut on STRONG bass peaks. Weak thumps become smooth pans, not cuts.
       const bassPeakThreshold = intensity === "aggressive" ? 0.42 : intensity === "chill" ? 0.62 : 0.5;
       const strongKicks = (beats.kicks.length >= 4 ? beats.kicks : beats.times).filter((t) => {
@@ -1052,6 +1086,27 @@ function Editor() {
           </div>
         )}
 
+        {/* AI DIRECTOR CARD */}
+        {beats && (aiThinking || aiPlan) && (
+          <div className="mt-3 rounded-2xl border border-[#7c5cff]/30 bg-[#7c5cff]/10 p-4 backdrop-blur-xl">
+            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.28em] text-[#c9b8ff]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#7c5cff]" />
+              {aiThinking ? "AI Director सोच रहा है…" : aiPlan?.source === "ai" ? "AI Director Plan" : "Smart Engine Plan"}
+            </div>
+            {aiPlan && (
+              <>
+                <div className="mt-2 text-sm font-bold">{aiPlan.vibe}</div>
+                <div className="mt-1 text-[11px] text-white/70">{aiPlan.notes}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-white/80">
+                  <span className="rounded-full bg-white/10 px-2 py-1">📸 {aiPlan.photoCount} photos</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1">✂ {aiPlan.cutStyle}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1">🎨 {aiPlan.grade}</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* STEP 2: Click-to-Fill Photo System */}
         {beats && stage !== "rendering" && stage !== "done" && stage !== "ad" && (
           <div className="mt-6">
@@ -1091,18 +1146,21 @@ function Editor() {
             <h2 className="mb-3 text-sm font-semibold tracking-wider text-white/80">
               🎬 Step 3 — मोड चुनें
             </h2>
+            <div className="mb-3 flex flex-wrap gap-2">
+              {(Object.keys(QUALITIES) as QualityKey[]).map((q) => (
+                <button key={q} type="button" onClick={() => setQuality(q)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                    quality === q ? "bg-white text-black" : "border border-white/15 bg-white/5 text-white/70"
+                  }`}>{q.toUpperCase()}</button>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <ModeCard active={mode === "shorts"} title="Shorts" sub="15–60s • 9:16"
                 onClick={() => setMode("shorts")} />
               <ModeCard active={mode === "long"} title="Long Video"
-                sub={`Max ${LONG_MAX_SEC}s • 16:9${beats.duration > LONG_MAX_SEC ? " • chunks" : ""}`}
+                sub={`पूरा ${beats.duration.toFixed(0)}s • 16:9`}
                 onClick={() => setMode("long")} />
             </div>
-            {mode === "long" && beats.duration > LONG_MAX_SEC && (
-              <p className="mt-2 text-center text-[11px] text-white/50">
-                लंबा गाना — 60s chunks में render होगा, अगली बार आगे से शुरू होगा
-              </p>
-            )}
           </div>
         )}
 
@@ -1137,7 +1195,7 @@ function Editor() {
             <div className="mb-4 text-center">
               <div className="text-xs font-semibold uppercase tracking-[0.3em] text-white/50">Preview Ready</div>
               <h2 className="mt-2 text-2xl font-black">Video Preview</h2>
-              <p className="mt-1 text-xs text-white/55">पहले देखें, फिर SAVE / EXPORT दबाएँ.</p>
+              <p className="mt-1 text-xs text-white/55">पूरा {exactDurationSec.toFixed(1)}s HD वीडियो तैयार — नीचे DOWNLOAD दबाएँ.</p>
             </div>
             <video src={videoUrl} controls autoPlay muted={false} playsInline preload="auto"
               controlsList="nodownload nofullscreen noremoteplayback"
@@ -1147,7 +1205,7 @@ function Editor() {
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
-              {exporting ? "SAVING…" : "SAVE / EXPORT"}
+              {exporting ? "SAVING…" : "⬇  DOWNLOAD (Gallery में सेव करें)"}
             </button>
             <button onClick={() => { setStage("ready"); setVideoUrl(null); setVideoBlob(null); setProgress(0); }}
               className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10">
