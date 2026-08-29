@@ -745,8 +745,6 @@ function Editor() {
   function confirmQuality(q: QualityKey) {
     setQuality(q);
     setQualityOpen(false);
-    if (!pro) setStage("ad");
-    else void doRender();
   }
 
   async function doRender() {
@@ -1088,6 +1086,27 @@ function Editor() {
           </div>
         )}
 
+        {/* AI DIRECTOR CARD */}
+        {beats && (aiThinking || aiPlan) && (
+          <div className="mt-3 rounded-2xl border border-[#7c5cff]/30 bg-[#7c5cff]/10 p-4 backdrop-blur-xl">
+            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.28em] text-[#c9b8ff]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#7c5cff]" />
+              {aiThinking ? "AI Director सोच रहा है…" : aiPlan?.source === "ai" ? "AI Director Plan" : "Smart Engine Plan"}
+            </div>
+            {aiPlan && (
+              <>
+                <div className="mt-2 text-sm font-bold">{aiPlan.vibe}</div>
+                <div className="mt-1 text-[11px] text-white/70">{aiPlan.notes}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-white/80">
+                  <span className="rounded-full bg-white/10 px-2 py-1">📸 {aiPlan.photoCount} photos</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1">✂ {aiPlan.cutStyle}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-1">🎨 {aiPlan.grade}</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* STEP 2: Click-to-Fill Photo System */}
         {beats && stage !== "rendering" && stage !== "done" && stage !== "ad" && (
           <div className="mt-6">
@@ -1127,6 +1146,14 @@ function Editor() {
             <h2 className="mb-3 text-sm font-semibold tracking-wider text-white/80">
               🎬 Step 3 — मोड चुनें
             </h2>
+            <div className="mb-3 flex flex-wrap gap-2">
+              {(Object.keys(QUALITIES) as QualityKey[]).map((q) => (
+                <button key={q} type="button" onClick={() => setQuality(q)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                    quality === q ? "bg-white text-black" : "border border-white/15 bg-white/5 text-white/70"
+                  }`}>{q.toUpperCase()}</button>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <ModeCard active={mode === "shorts"} title="Shorts" sub="15–60s • 9:16"
                 onClick={() => setMode("shorts")} />
