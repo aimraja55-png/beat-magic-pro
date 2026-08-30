@@ -157,41 +157,58 @@ function segmentMood(
   else mood = "groove";
   return { mood, bass: bassMean, slope, hats: hatMean };
 }
-// Every mood gets its own trendy visual vocabulary → no repeated look per photo
+// Every mood gets its own trendy visual vocabulary → no repeated look per photo.
+// `runSalt` rotates the whole vocabulary per render, so two videos from the same
+// song + photos still execute completely different motion sequences.
 function styleForMood(
-  mood: SegMood, seed: number, recent: StylePack[], banned: Set<string>,
+  mood: SegMood, seed: number, recent: StylePack[], banned: Set<string>, runSalt = 0,
 ): StylePack {
   const base = pickStylePack(seed, recent, banned, mood === "drop" ? "aggressive" : mood === "calm" ? "chill" : "normal");
   const r = mulberry32(seed ^ 0x9e3779b9);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(r() * arr.length)];
-  const recentBases = new Set(recent.slice(-3).map((s) => s.base));
-  const choose = <T,>(arr: readonly T[]): T => {
-    const avail = arr.filter((a) => !recentBases.has(a as unknown as StylePack["base"]));
+  const recentBases = new Set<string>(recent.slice(-3).map((s) => s.base));
+  const recentEntries = new Set<string>(recent.slice(-3).map((s) => s.entry));
+  const recentExits = new Set<string>(recent.slice(-3).map((s) => s.exit));
+  const choose = <T extends string>(arr: readonly T[]): T => {
+    // First try the MASTER REFERENCE vocabulary (weighted like the sample video),
+    // then fall back to the mood pool so variety never runs dry.
+    const refHit = refPick(MASTER_STYLE.motions, arr, r, runSalt, recentBases, banned);
+    if (refHit) return refHit;
+    const avail = arr.filter((a) => !recentBases.has(a));
     const pool = avail.length ? avail : arr;
     return pool[Math.floor(r() * pool.length)];
   };
+  const chooseEntry = <T extends string>(arr: readonly T[]): T =>
+    refPick(MASTER_STYLE.entries, arr, r, runSalt + 7, recentEntries, banned) ?? pick(arr);
+  const chooseExit = <T extends string>(arr: readonly T[]): T =>
+    refPick(MASTER_STYLE.exits, arr, r, runSalt + 13, recentExits, banned) ?? pick(arr);
+  // Grade follows the reference palette (warm / teal-orange dominant)
+  const refGrade = MASTER_STYLE.grades[
+    Math.floor(r() * MASTER_STYLE.grades.length + runSalt) % MASTER_STYLE.grades.length
+  ] as StylePack["filter"];
+  const graded = { ...base, filter: refGrade };
   if (mood === "drop") {
-    return { ...base,
+    return { ...graded,
       base: choose(["punchIn","tiltShake","whipPan","spiralZoom","handheld","layerPeel3D"] as const),
-      entry: pick(["glitchIn","shatterIn","zoomIn","slideL","slideR","chromaIn"] as const),
-      exit: pick(["slideL","slideR","zoomOut","irisOut","liquidOut"] as const) };
+      entry: chooseEntry(["glitchIn","shatterIn","zoomIn","slideL","slideR","chromaIn"] as const),
+      exit: chooseExit(["slideL","slideR","zoomOut","irisOut","liquidOut"] as const) };
   }
   if (mood === "expand") {
-    return { ...base,
+    return { ...graded,
       base: choose(["punchOut","smoothPan","kenburns","dolly"] as const),
-      entry: pick(["fadeIn","blurIn","irisIn","liquidIn"] as const),
-      exit: pick(["fadeOut","blurOut","zoomOut","none"] as const) };
+      entry: chooseEntry(["fadeIn","blurIn","irisIn","liquidIn"] as const),
+      exit: chooseExit(["fadeOut","blurOut","zoomOut","none"] as const) };
   }
   if (mood === "calm") {
-    return { ...base,
+    return { ...graded,
       base: choose(["smoothPan","kenburns","liquidWarp","parallax3D"] as const),
-      entry: pick(["fadeIn","liquidIn","blurIn"] as const),
-      exit: pick(["fadeOut","liquidOut","blurOut"] as const) };
+      entry: chooseEntry(["fadeIn","liquidIn","blurIn"] as const),
+      exit: chooseExit(["fadeOut","liquidOut","blurOut"] as const) };
   }
-  return { ...base,
+  return { ...graded,
     base: choose(["orbit","parallax3D","dolly","kenburns","photoMerge","liquidWarp"] as const),
-    entry: pick(["slideU","slideD","irisIn","zoomIn","chromaIn","fadeIn"] as const),
-    exit: pick(["slideU","slideD","fadeOut","blurOut","none"] as const) };
+    entry: chooseEntry(["slideU","slideD","irisIn","zoomIn","chromaIn","fadeIn"] as const),
+    exit: chooseExit(["slideU","slideD","fadeOut","blurOut","none"] as const) };
 }
 
 /* ---------------- Beat detection ---------------- */
