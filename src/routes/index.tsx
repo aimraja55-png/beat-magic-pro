@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
 import { planEdit, type DirectorPlan } from "@/lib/director.functions";
+import { MASTER_STYLE, adaptiveHoldSeconds, microCutStride, refPick } from "@/lib/masterStyle";
 
 export const Route = createFileRoute("/")({
   head: () => ({
