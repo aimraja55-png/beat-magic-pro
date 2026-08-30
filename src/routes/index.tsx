@@ -882,16 +882,22 @@ function Editor() {
       // Zero-repetition memory across renders for this same audio file
       const bannedStyles = new Set<string>(getUsedStyles(audioFile));
       const usedThisRun: string[] = [];
+      // Per-render salt: rotates the whole reference vocabulary so every export
+      // is a fresh motion sequence even with identical audio + photos.
+      const runSalt = Math.floor(Math.random() * 9973) + (Date.now() % 997);
+      // Photo order also rotates per render (never the same 1→N march)
+      const orderShift = runSalt % Math.max(1, imgs.length);
       for (let i = 0; i < segments; i++) {
-        const cycle = Math.floor(i / imgs.length);
-        const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
+        const j = i + orderShift;
+        const cycle = Math.floor(j / imgs.length);
+        const idx = cycle % 2 === 0 ? j % imgs.length : imgs.length - 1 - (j % imgs.length);
         // seed varies with time so re-renders never draw the same combos
         const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
         // ── SOUND-DRIVEN MOTION: read this exact audio slice, then pick its look ──
         const segA = cutTimes[i] + startOffset;
         const segB = cutTimes[i + 1] + startOffset;
         const { mood } = segmentMood(beats, segA, segB);
-        const style = styleForMood(mood, seed, recentStyles, bannedStyles);
+        const style = styleForMood(mood, seed, recentStyles, bannedStyles, runSalt + i);
         if (isCalmAt((segA + segB) / 2)) { /* mood already resolves calm passages */ }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
