@@ -843,17 +843,18 @@ function Editor() {
         const idx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(t / beats.hop)));
         return (beats.kickEnv[idx] ?? 0) >= bassPeakThreshold;
       });
-      // Micro-cuts only when the song is genuinely energetic
-      const microCuts = intensity === "chill" ? [] :
-        beats.hats.filter((_, i) => i % (intensity === "aggressive" ? 3 : 5) === 0);
+      // Micro-cut density comes from the MASTER REFERENCE, re-timed to this BPM
+      const hatStride = microCutStride(beats.bpm, intensity);
+      const microCuts = hatStride === 0 ? [] : beats.hats.filter((_, i) => i % hatStride === 0);
       const kickList = strongKicks.length >= 3 ? strongKicks : (beats.kicks.length >= 4 ? beats.kicks : beats.times);
       const mergedAll = [...kickList, ...microCuts]
         .filter((t) => t >= startOffset && t < startOffset + targetDuration)
         .map((t) => t - startOffset)
         .sort((a, b) => a - b);
       const cutTimes: number[] = [0];
-      // Minimum photo hold time — chill songs get longer, aggressive shorter
-      const minHold = intensity === "chill" ? 1.4 : intensity === "aggressive" ? 0.28 : 0.55;
+      // Reference pacing projected onto the NEW track's tempo (beats → seconds).
+      // Same *feel* as the sample video, never its absolute timestamps.
+      const minHold = adaptiveHoldSeconds(beats.bpm, intensity);
       for (const t of mergedAll) {
         if (t - cutTimes[cutTimes.length - 1] > minHold) cutTimes.push(t);
       }
