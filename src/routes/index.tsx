@@ -1130,6 +1130,12 @@ function Editor() {
                   <span className="rounded-full bg-white/10 px-2 py-1">📸 {aiPlan.photoCount} photos</span>
                   <span className="rounded-full bg-white/10 px-2 py-1">✂ {aiPlan.cutStyle}</span>
                   <span className="rounded-full bg-white/10 px-2 py-1">🎨 {aiPlan.grade}</span>
+                  <span className="rounded-full bg-[#ff2e88]/20 px-2 py-1 text-[#ffb3d4]">🎬 Master Style लागू</span>
+                  {beats && (
+                    <span className="rounded-full bg-white/10 px-2 py-1">
+                      ⏱ {adaptiveHoldSeconds(beats.bpm, aiPlan.cutStyle === "rapid" ? "aggressive" : aiPlan.cutStyle === "slow" ? "chill" : "normal").toFixed(2)}s/photo
+                    </span>
+                  )}
                 </div>
               </>
             )}
