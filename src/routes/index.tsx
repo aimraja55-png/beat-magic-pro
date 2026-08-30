@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
 import { planEdit, type DirectorPlan } from "@/lib/director.functions";
+import { MASTER_STYLE, adaptiveHoldSeconds, microCutStride, refPick } from "@/lib/masterStyle";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -156,41 +157,58 @@ function segmentMood(
   else mood = "groove";
   return { mood, bass: bassMean, slope, hats: hatMean };
 }
-// Every mood gets its own trendy visual vocabulary → no repeated look per photo
+// Every mood gets its own trendy visual vocabulary → no repeated look per photo.
+// `runSalt` rotates the whole vocabulary per render, so two videos from the same
+// song + photos still execute completely different motion sequences.
 function styleForMood(
-  mood: SegMood, seed: number, recent: StylePack[], banned: Set<string>,
+  mood: SegMood, seed: number, recent: StylePack[], banned: Set<string>, runSalt = 0,
 ): StylePack {
   const base = pickStylePack(seed, recent, banned, mood === "drop" ? "aggressive" : mood === "calm" ? "chill" : "normal");
   const r = mulberry32(seed ^ 0x9e3779b9);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(r() * arr.length)];
-  const recentBases = new Set(recent.slice(-3).map((s) => s.base));
-  const choose = <T,>(arr: readonly T[]): T => {
-    const avail = arr.filter((a) => !recentBases.has(a as unknown as StylePack["base"]));
+  const recentBases = new Set<string>(recent.slice(-3).map((s) => s.base));
+  const recentEntries = new Set<string>(recent.slice(-3).map((s) => s.entry));
+  const recentExits = new Set<string>(recent.slice(-3).map((s) => s.exit));
+  const choose = <T extends string>(arr: readonly T[]): T => {
+    // First try the MASTER REFERENCE vocabulary (weighted like the sample video),
+    // then fall back to the mood pool so variety never runs dry.
+    const refHit = refPick(MASTER_STYLE.motions, arr, r, runSalt, recentBases, banned);
+    if (refHit) return refHit;
+    const avail = arr.filter((a) => !recentBases.has(a));
     const pool = avail.length ? avail : arr;
     return pool[Math.floor(r() * pool.length)];
   };
+  const chooseEntry = <T extends string>(arr: readonly T[]): T =>
+    refPick(MASTER_STYLE.entries, arr, r, runSalt + 7, recentEntries, banned) ?? pick(arr);
+  const chooseExit = <T extends string>(arr: readonly T[]): T =>
+    refPick(MASTER_STYLE.exits, arr, r, runSalt + 13, recentExits, banned) ?? pick(arr);
+  // Grade follows the reference palette (warm / teal-orange dominant)
+  const refGrade = MASTER_STYLE.grades[
+    Math.floor(r() * MASTER_STYLE.grades.length + runSalt) % MASTER_STYLE.grades.length
+  ] as StylePack["filter"];
+  const graded = { ...base, filter: refGrade };
   if (mood === "drop") {
-    return { ...base,
+    return { ...graded,
       base: choose(["punchIn","tiltShake","whipPan","spiralZoom","handheld","layerPeel3D"] as const),
-      entry: pick(["glitchIn","shatterIn","zoomIn","slideL","slideR","chromaIn"] as const),
-      exit: pick(["slideL","slideR","zoomOut","irisOut","liquidOut"] as const) };
+      entry: chooseEntry(["glitchIn","shatterIn","zoomIn","slideL","slideR","chromaIn"] as const),
+      exit: chooseExit(["slideL","slideR","zoomOut","irisOut","liquidOut"] as const) };
   }
   if (mood === "expand") {
-    return { ...base,
+    return { ...graded,
       base: choose(["punchOut","smoothPan","kenburns","dolly"] as const),
-      entry: pick(["fadeIn","blurIn","irisIn","liquidIn"] as const),
-      exit: pick(["fadeOut","blurOut","zoomOut","none"] as const) };
+      entry: chooseEntry(["fadeIn","blurIn","irisIn","liquidIn"] as const),
+      exit: chooseExit(["fadeOut","blurOut","zoomOut","none"] as const) };
   }
   if (mood === "calm") {
-    return { ...base,
+    return { ...graded,
       base: choose(["smoothPan","kenburns","liquidWarp","parallax3D"] as const),
-      entry: pick(["fadeIn","liquidIn","blurIn"] as const),
-      exit: pick(["fadeOut","liquidOut","blurOut"] as const) };
+      entry: chooseEntry(["fadeIn","liquidIn","blurIn"] as const),
+      exit: chooseExit(["fadeOut","liquidOut","blurOut"] as const) };
   }
-  return { ...base,
+  return { ...graded,
     base: choose(["orbit","parallax3D","dolly","kenburns","photoMerge","liquidWarp"] as const),
-    entry: pick(["slideU","slideD","irisIn","zoomIn","chromaIn","fadeIn"] as const),
-    exit: pick(["slideU","slideD","fadeOut","blurOut","none"] as const) };
+    entry: chooseEntry(["slideU","slideD","irisIn","zoomIn","chromaIn","fadeIn"] as const),
+    exit: chooseExit(["slideU","slideD","fadeOut","blurOut","none"] as const) };
 }
 
 /* ---------------- Beat detection ---------------- */
@@ -819,23 +837,26 @@ function Editor() {
       const intensity: "chill" | "normal" | "aggressive" = aiPlan
         ? (aiPlan.cutStyle === "rapid" ? "aggressive" : aiPlan.cutStyle === "slow" ? "chill" : "normal")
         : localIntensity;
+      // AI Director's effectStrength scales the reference's motion ferocity
+      const strengthGain = 0.75 + (aiPlan ? aiPlan.effectStrength : 0.7) * 0.5;
       // Only cut on STRONG bass peaks. Weak thumps become smooth pans, not cuts.
       const bassPeakThreshold = intensity === "aggressive" ? 0.42 : intensity === "chill" ? 0.62 : 0.5;
       const strongKicks = (beats.kicks.length >= 4 ? beats.kicks : beats.times).filter((t) => {
         const idx = Math.min(beats.kickEnv.length - 1, Math.max(0, Math.floor(t / beats.hop)));
         return (beats.kickEnv[idx] ?? 0) >= bassPeakThreshold;
       });
-      // Micro-cuts only when the song is genuinely energetic
-      const microCuts = intensity === "chill" ? [] :
-        beats.hats.filter((_, i) => i % (intensity === "aggressive" ? 3 : 5) === 0);
+      // Micro-cut density comes from the MASTER REFERENCE, re-timed to this BPM
+      const hatStride = microCutStride(beats.bpm, intensity);
+      const microCuts = hatStride === 0 ? [] : beats.hats.filter((_, i) => i % hatStride === 0);
       const kickList = strongKicks.length >= 3 ? strongKicks : (beats.kicks.length >= 4 ? beats.kicks : beats.times);
       const mergedAll = [...kickList, ...microCuts]
         .filter((t) => t >= startOffset && t < startOffset + targetDuration)
         .map((t) => t - startOffset)
         .sort((a, b) => a - b);
       const cutTimes: number[] = [0];
-      // Minimum photo hold time — chill songs get longer, aggressive shorter
-      const minHold = intensity === "chill" ? 1.4 : intensity === "aggressive" ? 0.28 : 0.55;
+      // Reference pacing projected onto the NEW track's tempo (beats → seconds).
+      // Same *feel* as the sample video, never its absolute timestamps.
+      const minHold = adaptiveHoldSeconds(beats.bpm, intensity);
       for (const t of mergedAll) {
         if (t - cutTimes[cutTimes.length - 1] > minHold) cutTimes.push(t);
       }
@@ -863,16 +884,22 @@ function Editor() {
       // Zero-repetition memory across renders for this same audio file
       const bannedStyles = new Set<string>(getUsedStyles(audioFile));
       const usedThisRun: string[] = [];
+      // Per-render salt: rotates the whole reference vocabulary so every export
+      // is a fresh motion sequence even with identical audio + photos.
+      const runSalt = Math.floor(Math.random() * 9973) + (Date.now() % 997);
+      // Photo order also rotates per render (never the same 1→N march)
+      const orderShift = runSalt % Math.max(1, imgs.length);
       for (let i = 0; i < segments; i++) {
-        const cycle = Math.floor(i / imgs.length);
-        const idx = cycle % 2 === 0 ? i % imgs.length : imgs.length - 1 - (i % imgs.length);
+        const j = i + orderShift;
+        const cycle = Math.floor(j / imgs.length);
+        const idx = cycle % 2 === 0 ? j % imgs.length : imgs.length - 1 - (j % imgs.length);
         // seed varies with time so re-renders never draw the same combos
         const seed = i * 9301 + 49297 + Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1e6);
         // ── SOUND-DRIVEN MOTION: read this exact audio slice, then pick its look ──
         const segA = cutTimes[i] + startOffset;
         const segB = cutTimes[i + 1] + startOffset;
         const { mood } = segmentMood(beats, segA, segB);
-        const style = styleForMood(mood, seed, recentStyles, bannedStyles);
+        const style = styleForMood(mood, seed, recentStyles, bannedStyles, runSalt + i);
         if (isCalmAt((segA + segB) / 2)) { /* mood already resolves calm passages */ }
         seq.push({ img: imgs[idx], style });
         recentStyles.push(style);
@@ -962,8 +989,10 @@ function Editor() {
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
         // Millisecond-locked, interpolated audio read → visuals hit exactly on the beat
-        const punch = sampleEnv(beats.kickEnv, beats.hop, abs);
-        const flash = sampleEnv(beats.clapEnv, beats.hop, abs);
+        // Reference gain: the sample edit punches harder on bass and carries more
+        // whip-blur on cuts — apply that character, clamped so it never blows out.
+        const punch = Math.min(1, sampleEnv(beats.kickEnv, beats.hop, abs) * MASTER_STYLE.punchGain * strengthGain);
+        const flash = Math.min(1, sampleEnv(beats.clapEnv, beats.hop, abs) * MASTER_STYLE.blurGain * strengthGain);
         const shimmer = sampleEnv(beats.hatEnv, beats.hop, abs);
         const item = seq[Math.min(i, seq.length - 1)];
         if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
@@ -1101,6 +1130,12 @@ function Editor() {
                   <span className="rounded-full bg-white/10 px-2 py-1">📸 {aiPlan.photoCount} photos</span>
                   <span className="rounded-full bg-white/10 px-2 py-1">✂ {aiPlan.cutStyle}</span>
                   <span className="rounded-full bg-white/10 px-2 py-1">🎨 {aiPlan.grade}</span>
+                  <span className="rounded-full bg-[#ff2e88]/20 px-2 py-1 text-[#ffb3d4]">🎬 Master Style लागू</span>
+                  {beats && (
+                    <span className="rounded-full bg-white/10 px-2 py-1">
+                      ⏱ {adaptiveHoldSeconds(beats.bpm, aiPlan.cutStyle === "rapid" ? "aggressive" : aiPlan.cutStyle === "slow" ? "chill" : "normal").toFixed(2)}s/photo
+                    </span>
+                  )}
                 </div>
               </>
             )}
