@@ -49,7 +49,12 @@ export const planEdit = createServerFn({ method: "POST" })
         body: JSON.stringify({
           model: "openai/gpt-5.6-sol",
           instructions:
-            "You are a music-video editing director. Given audio analysis metrics, return ONLY compact JSON: " +
+            "You are a music-video editing director working from a MASTER STYLE REFERENCE: " +
+            "vertical 9:16 portrait edit, warm/teal-orange saturated grade, punchy bass zoom-hits, " +
+            "whip/motion-blur transitions, photo held ~1-2 beats, photos cycled and re-used. " +
+            "Adapt this style to the NEW track's tempo and mood — never copy fixed timings; " +
+            "scale pacing and motion intensity to the given BPM, kick density and mood timeline. " +
+            "Given audio analysis metrics, return ONLY compact JSON: " +
             '{"photoCount":number(4-40),"vibe":string,"grade":"warm"|"cool"|"noir"|"teal"|"neutral","cutStyle":"slow"|"balanced"|"rapid","effectStrength":number(0-1),"notes":string}. ' +
             "photoCount must fit the duration: rapid ~1.1s per photo, balanced ~1.7s, slow ~2.6s. notes must be one short Hindi sentence.",
           input: JSON.stringify(data),
