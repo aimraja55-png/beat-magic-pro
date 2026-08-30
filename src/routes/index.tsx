@@ -987,8 +987,10 @@ function Editor() {
         const segLen = Math.max(0.05, segEnd - segStart);
         const local = Math.min(1, Math.max(0, (t - segStart) / segLen));
         // Millisecond-locked, interpolated audio read → visuals hit exactly on the beat
-        const punch = sampleEnv(beats.kickEnv, beats.hop, abs);
-        const flash = sampleEnv(beats.clapEnv, beats.hop, abs);
+        // Reference gain: the sample edit punches harder on bass and carries more
+        // whip-blur on cuts — apply that character, clamped so it never blows out.
+        const punch = Math.min(1, sampleEnv(beats.kickEnv, beats.hop, abs) * MASTER_STYLE.punchGain * strengthGain);
+        const flash = Math.min(1, sampleEnv(beats.clapEnv, beats.hop, abs) * MASTER_STYLE.blurGain * strengthGain);
         const shimmer = sampleEnv(beats.hatEnv, beats.hop, abs);
         const item = seq[Math.min(i, seq.length - 1)];
         if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
