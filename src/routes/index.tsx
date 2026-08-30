@@ -281,7 +281,127 @@ async function analyzeBeats(file: File): Promise<Beats> {
   const diffs = times.slice(1).map((b, i) => b - times[i]).sort((a, b) => a - b);
   const median = diffs[Math.floor(diffs.length / 2)] || 0.5;
   const bpm = Math.round(60 / median);
-  return { times, kicks: kicks.length >= 4 ? kicks : times, claps, hats, kickEnv, clapEnv, hatEnv, hop: hopSec, bpm, duration: audio.duration };
+  const kickList = kicks.length >= 4 ? kicks : times;
+  // ── UNRESTRICTED FULL-TRACK DEEP SCAN: find the highest-impact 15–20s window ──
+  const hook = findBestSegment({
+    duration: audio.duration,
+    hop: hopSec,
+    fullEnv, kickEnv, clapEnv, hatEnv,
+    kicks: kickList,
+    bpm,
+  });
+  return {
+    times, kicks: kickList, claps, hats, kickEnv, clapEnv, hatEnv,
+    hop: hopSec, bpm, duration: audio.duration,
+    hookStart: hook.start, hookDuration: hook.duration, hookScore: hook.score,
+  };
+}
+
+/**
+ * FULL-TRACK DEEP SCAN — scores every possible window across the ENTIRE timeline
+ * (intro, middle, outro — no positional restriction) and returns the single most
+ * high-impact section, strictly capped between 15 and 20 seconds. Tracks shorter
+ * than 15s are returned untouched at their exact original length.
+ */
+function findBestSegment(a: {
+  duration: number; hop: number;
+  fullEnv: Float32Array; kickEnv: Float32Array; clapEnv: Float32Array; hatEnv: Float32Array;
+  kicks: number[]; bpm: number;
+}): { start: number; duration: number; score: number } {
+  const MIN_LEN = 15, MAX_LEN = 20;
+  if (a.duration <= MIN_LEN + 0.35) {
+    return { start: 0, duration: a.duration, score: 0 };
+  }
+
+  const hop = a.hop;
+  const frames = a.fullEnv.length;
+  // coarse pooled energy at 0.25s resolution → fast even for a 10-minute track
+  const poolSec = 0.25;
+  const poolStep = Math.max(1, Math.round(poolSec / hop));
+  const pooled: number[] = [];
+  const pooledKick: number[] = [];
+  const pooledHigh: number[] = [];
+  for (let i = 0; i < frames; i += poolStep) {
+    let f = 0, k = 0, h = 0, n = 0;
+    for (let j = i; j < Math.min(frames, i + poolStep); j++) {
+      f += a.fullEnv[j] ?? 0;
+      k += a.kickEnv[j] ?? 0;
+      h += Math.max(a.clapEnv[j] ?? 0, a.hatEnv[j] ?? 0);
+      n++;
+    }
+    pooled.push(f / Math.max(1, n));
+    pooledKick.push(k / Math.max(1, n));
+    pooledHigh.push(h / Math.max(1, n));
+  }
+
+  const prefix = (arr: number[]) => {
+    const p = new Float64Array(arr.length + 1);
+    for (let i = 0; i < arr.length; i++) p[i + 1] = p[i] + arr[i];
+    return p;
+  };
+  const pFull = prefix(pooled), pKick = prefix(pooledKick), pHigh = prefix(pooledHigh);
+  const cellsFor = (sec: number) => Math.max(1, Math.round(sec / poolSec));
+
+  // kick density lookup (transients per second inside a window)
+  const kicksSorted = a.kicks.slice().sort((x, y) => x - y);
+  const kicksBefore = (t: number) => {
+    let lo = 0, hi = kicksSorted.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (kicksSorted[m] < t) lo = m + 1; else hi = m; }
+    return lo;
+  };
+
+  let best = { start: 0, duration: MIN_LEN, score: -Infinity };
+  const strideSec = 0.5;
+  const lengths: number[] = [15, 16, 17, 18, 19, 20];
+
+  for (let start = 0; start + MIN_LEN <= a.duration + 0.001; start += strideSec) {
+    for (const len of lengths) {
+      if (start + len > a.duration) continue;
+      const c0 = Math.floor(start / poolSec);
+      const c1 = Math.min(pooled.length, c0 + cellsFor(len));
+      const cells = c1 - c0;
+      if (cells <= 0) continue;
+      const energy = (pFull[c1] - pFull[c0]) / cells;
+      const bass = (pKick[c1] - pKick[c0]) / cells;
+      const highs = (pHigh[c1] - pHigh[c0]) / cells;
+      const density = (kicksBefore(start + len) - kicksBefore(start)) / len;
+      // energy contrast: is this window louder than the surrounding track?
+      const lift = energy - (pFull[pooled.length] - pFull[0]) / Math.max(1, pooled.length);
+      // rising build (second half hotter than first) reads as a real drop
+      const mid = c0 + Math.floor(cells / 2);
+      const firstHalf = (pFull[mid] - pFull[c0]) / Math.max(1, mid - c0);
+      const secondHalf = (pFull[c1] - pFull[mid]) / Math.max(1, c1 - mid);
+      const build = Math.max(0, secondHalf - firstHalf);
+      const score =
+        energy * 3.0 +
+        bass * 2.6 +
+        highs * 1.1 +
+        Math.min(1.2, density / 3) * 1.4 +
+        Math.max(0, lift) * 2.2 +
+        build * 1.3 +
+        (len / MAX_LEN) * 0.25; // gentle nudge toward the fuller 20s phrase
+      if (score > best.score) best = { start, duration: len, score };
+    }
+  }
+
+  // Snap the start onto the nearest strong kick so the cut lands on the transient
+  let snapped = best.start;
+  let bestDelta = Infinity;
+  for (const k of kicksSorted) {
+    const d = Math.abs(k - best.start);
+    if (d < bestDelta && d <= 0.45) { bestDelta = d; snapped = k; }
+    if (k > best.start + 1) break;
+  }
+  // keep phrase alignment to the bar grid where possible
+  const barSec = (60 / (a.bpm > 40 && a.bpm < 220 ? a.bpm : 120)) * 4;
+  let dur = best.duration;
+  const bars = Math.max(1, Math.round(dur / barSec));
+  const barFit = bars * barSec;
+  if (barFit >= MIN_LEN && barFit <= MAX_LEN) dur = barFit;
+  if (snapped + dur > a.duration) snapped = Math.max(0, a.duration - dur);
+  if (snapped + dur > a.duration) dur = a.duration - snapped;
+
+  return { start: Math.max(0, snapped), duration: Math.min(MAX_LEN, Math.max(1, dur)), score: best.score };
 }
 
 /* ---------------- Save helpers ---------------- */
