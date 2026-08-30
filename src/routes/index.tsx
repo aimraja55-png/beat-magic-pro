@@ -30,6 +30,10 @@ type Beats = {
   hop: number;
   bpm: number;
   duration: number;
+  /** best high-impact drop window found anywhere in the track */
+  hookStart: number;
+  hookDuration: number;
+  hookScore: number;
 };
 type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
 type QualityKey = "480p" | "720p" | "1080p" | "4k";
