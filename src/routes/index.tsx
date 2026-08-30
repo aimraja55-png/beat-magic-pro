@@ -837,6 +837,8 @@ function Editor() {
       const intensity: "chill" | "normal" | "aggressive" = aiPlan
         ? (aiPlan.cutStyle === "rapid" ? "aggressive" : aiPlan.cutStyle === "slow" ? "chill" : "normal")
         : localIntensity;
+      // AI Director's effectStrength scales the reference's motion ferocity
+      const strengthGain = 0.75 + (aiPlan ? aiPlan.effectStrength : 0.7) * 0.5;
       // Only cut on STRONG bass peaks. Weak thumps become smooth pans, not cuts.
       const bassPeakThreshold = intensity === "aggressive" ? 0.42 : intensity === "chill" ? 0.62 : 0.5;
       const strongKicks = (beats.kicks.length >= 4 ? beats.kicks : beats.times).filter((t) => {
