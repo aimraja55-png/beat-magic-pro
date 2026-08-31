@@ -922,9 +922,9 @@ function Editor() {
     const bitrate = cfg.bitrate;
     const drawWM = !pro; // watermark for free users
 
-    // Full-length render: exact audio duration, no chunking
-    const startOffset = 0;
-    const targetDuration = beats.duration;
+    // ── AI-SELECTED HIGH-IMPACT WINDOW: anywhere in the track, capped 15–20s ──
+    const startOffset = beats.hookStart;
+    const targetDuration = beats.hookDuration;
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
