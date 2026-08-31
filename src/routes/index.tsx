@@ -756,7 +756,14 @@ function Editor() {
 
   const renderIdRef = useRef(0);
 
-  const photosNeeded = aiPlan ? aiPlan.photoCount : beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
+  const photosNeeded = aiPlan
+    ? aiPlan.photoCount
+    : beats
+      ? Math.max(4, Math.ceil(
+          (beats.times.filter((t) => t >= beats.hookStart && t < beats.hookStart + beats.hookDuration).length ||
+            beats.times.length) / 2,
+        ))
+      : 0;
   const filledCount = slots.filter(Boolean).length;
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
   const remainingToday = Math.max(0, dailyLimit() - usage);
