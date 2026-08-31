@@ -756,13 +756,19 @@ function Editor() {
 
   const renderIdRef = useRef(0);
 
-  const photosNeeded = aiPlan ? aiPlan.photoCount : beats ? Math.max(4, Math.ceil(beats.times.length / 2)) : 0;
+  const photosNeeded = aiPlan
+    ? aiPlan.photoCount
+    : beats
+      ? Math.max(4, Math.ceil(
+          (beats.times.filter((t) => t >= beats.hookStart && t < beats.hookStart + beats.hookDuration).length ||
+            beats.times.length) / 2,
+        ))
+      : 0;
   const filledCount = slots.filter(Boolean).length;
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
   const remainingToday = Math.max(0, dailyLimit() - usage);
-  const exactDurationSec = beats
-    ? beats.duration
-    : 0;
+  // Export length = the AI-selected high-impact window (15–20s), or full length if shorter
+  const exactDurationSec = beats ? beats.hookDuration : 0;
 
   useEffect(() => {
     setPro(isPro());
@@ -784,23 +790,31 @@ function Editor() {
     try {
       const b = await analyzeBeats(f);
       setBeats(b);
-      let need = Math.max(4, Math.ceil(b.times.length / 2));
+      const hookEnd = b.hookStart + b.hookDuration;
+      const hookBeats = b.times.filter((t) => t >= b.hookStart && t < hookEnd);
+      let need = Math.max(4, Math.ceil((hookBeats.length || b.times.length) / 2));
       setSlots(new Array(need).fill(null));
       setStage("ready");
-      setLog(`✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • ${b.times.length} beats`);
+      const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+      setLog(
+        b.duration <= 15.4
+          ? `✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • पूरा ट्रैक इस्तेमाल होगा`
+          : `✓ AI Drop मिला: ${mmss(b.hookStart)} → ${mmss(hookEnd)} (${b.hookDuration.toFixed(0)}s) • ~${b.bpm} BPM`,
+      );
 
       // ── AI DIRECTOR: real AI engine decides photo count, vibe, grade & cut style ──
       setAiThinking(true);
       try {
         const intensity = classifyIntensity(b.kickEnv);
-        const step = Math.max(1, Math.floor(b.times.length / 24));
+        const timeline = hookBeats.length >= 4 ? hookBeats : b.times;
+        const step = Math.max(1, Math.floor(timeline.length / 24));
         const moodTimeline: string[] = [];
-        for (let i = 0; i + 1 < b.times.length; i += step) {
-          moodTimeline.push(segmentMood(b, b.times[i], b.times[i + 1]).mood);
+        for (let i = 0; i + 1 < timeline.length; i += step) {
+          moodTimeline.push(segmentMood(b, timeline[i], timeline[i + 1]).mood);
         }
         const plan = await planEdit({
           data: {
-            durationSec: Math.round(b.duration * 10) / 10,
+            durationSec: Math.round(b.hookDuration * 10) / 10,
             bpm: b.bpm,
             beatCount: b.times.length,
             kickCount: b.kicks.length,
@@ -915,9 +929,9 @@ function Editor() {
     const bitrate = cfg.bitrate;
     const drawWM = !pro; // watermark for free users
 
-    // Full-length render: exact audio duration, no chunking
-    const startOffset = 0;
-    const targetDuration = beats.duration;
+    // ── AI-SELECTED HIGH-IMPACT WINDOW: anywhere in the track, capped 15–20s ──
+    const startOffset = beats.hookStart;
+    const targetDuration = beats.hookDuration;
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
@@ -1174,14 +1188,10 @@ function Editor() {
       setStage("done"); setCelebrate(true);
       setLog("✓ Preview तैयार है — SAVE दबाने पर ही डाउनलोड होगा.");
 
-      // Update usage + persistent session
+      // Update usage — each render is a fresh AI-picked drop window, no resume offsets
       bumpUsage(); setUsage(getUsageToday());
-      if (mode === "long") {
-        const nextOffset = startOffset + targetDuration;
-        if (nextOffset >= beats.duration - 0.5) clearSessionOffset(audioFile);
-        else saveSessionOffset(audioFile, nextOffset);
-        setSessionOffsetState(nextOffset >= beats.duration - 0.5 ? 0 : nextOffset);
-      }
+      clearSessionOffset(audioFile);
+      setSessionOffsetState(0);
       setTimeout(() => setCelebrate(false), 3500);
     } catch (error) {
       if (heapTimer) clearInterval(heapTimer);
@@ -1227,7 +1237,9 @@ function Editor() {
                 <div className="truncate text-sm font-semibold">🎵 {audioFile.name}</div>
                 <div className="mt-0.5 text-[11px] text-white/60">
                   {beats.duration.toFixed(1)}s • {beats.bpm} BPM • {beats.times.length} beats
-                  {mode === "long" && sessionOffset > 0.5 && ` • Resume @ ${sessionOffset.toFixed(1)}s`}
+                </div>
+                <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] font-semibold text-fuchsia-200">
+                  ⚡ AI Drop: {Math.floor(beats.hookStart / 60)}:{String(Math.floor(beats.hookStart % 60)).padStart(2, "0")} → {beats.hookDuration.toFixed(0)}s
                 </div>
               </div>
               <label className="shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
@@ -1314,10 +1326,10 @@ function Editor() {
               ))}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <ModeCard active={mode === "shorts"} title="Shorts" sub="15–60s • 9:16"
+              <ModeCard active={mode === "shorts"} title="Shorts" sub={`${beats.hookDuration.toFixed(0)}s Drop • 9:16`}
                 onClick={() => setMode("shorts")} />
-              <ModeCard active={mode === "long"} title="Long Video"
-                sub={`पूरा ${beats.duration.toFixed(0)}s • 16:9`}
+              <ModeCard active={mode === "long"} title="Wide"
+                sub={`${beats.hookDuration.toFixed(0)}s Drop • 16:9`}
                 onClick={() => setMode("long")} />
             </div>
           </div>
