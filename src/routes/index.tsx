@@ -1326,10 +1326,10 @@ function Editor() {
               ))}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <ModeCard active={mode === "shorts"} title="Shorts" sub="15–60s • 9:16"
+              <ModeCard active={mode === "shorts"} title="Shorts" sub={`${beats.hookDuration.toFixed(0)}s Drop • 9:16`}
                 onClick={() => setMode("shorts")} />
-              <ModeCard active={mode === "long"} title="Long Video"
-                sub={`पूरा ${beats.duration.toFixed(0)}s • 16:9`}
+              <ModeCard active={mode === "long"} title="Wide"
+                sub={`${beats.hookDuration.toFixed(0)}s Drop • 16:9`}
                 onClick={() => setMode("long")} />
             </div>
           </div>
