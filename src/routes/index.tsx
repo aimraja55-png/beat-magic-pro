@@ -1181,14 +1181,10 @@ function Editor() {
       setStage("done"); setCelebrate(true);
       setLog("✓ Preview तैयार है — SAVE दबाने पर ही डाउनलोड होगा.");
 
-      // Update usage + persistent session
+      // Update usage — each render is a fresh AI-picked drop window, no resume offsets
       bumpUsage(); setUsage(getUsageToday());
-      if (mode === "long") {
-        const nextOffset = startOffset + targetDuration;
-        if (nextOffset >= beats.duration - 0.5) clearSessionOffset(audioFile);
-        else saveSessionOffset(audioFile, nextOffset);
-        setSessionOffsetState(nextOffset >= beats.duration - 0.5 ? 0 : nextOffset);
-      }
+      clearSessionOffset(audioFile);
+      setSessionOffsetState(0);
       setTimeout(() => setCelebrate(false), 3500);
     } catch (error) {
       if (heapTimer) clearInterval(heapTimer);
