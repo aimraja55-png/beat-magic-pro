@@ -783,23 +783,31 @@ function Editor() {
     try {
       const b = await analyzeBeats(f);
       setBeats(b);
-      let need = Math.max(4, Math.ceil(b.times.length / 2));
+      const hookEnd = b.hookStart + b.hookDuration;
+      const hookBeats = b.times.filter((t) => t >= b.hookStart && t < hookEnd);
+      let need = Math.max(4, Math.ceil((hookBeats.length || b.times.length) / 2));
       setSlots(new Array(need).fill(null));
       setStage("ready");
-      setLog(`✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • ${b.times.length} beats`);
+      const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+      setLog(
+        b.duration <= 15.4
+          ? `✓ ${b.duration.toFixed(1)}s • ~${b.bpm} BPM • पूरा ट्रैक इस्तेमाल होगा`
+          : `✓ AI Drop मिला: ${mmss(b.hookStart)} → ${mmss(hookEnd)} (${b.hookDuration.toFixed(0)}s) • ~${b.bpm} BPM`,
+      );
 
       // ── AI DIRECTOR: real AI engine decides photo count, vibe, grade & cut style ──
       setAiThinking(true);
       try {
         const intensity = classifyIntensity(b.kickEnv);
-        const step = Math.max(1, Math.floor(b.times.length / 24));
+        const timeline = hookBeats.length >= 4 ? hookBeats : b.times;
+        const step = Math.max(1, Math.floor(timeline.length / 24));
         const moodTimeline: string[] = [];
-        for (let i = 0; i + 1 < b.times.length; i += step) {
-          moodTimeline.push(segmentMood(b, b.times[i], b.times[i + 1]).mood);
+        for (let i = 0; i + 1 < timeline.length; i += step) {
+          moodTimeline.push(segmentMood(b, timeline[i], timeline[i + 1]).mood);
         }
         const plan = await planEdit({
           data: {
-            durationSec: Math.round(b.duration * 10) / 10,
+            durationSec: Math.round(b.hookDuration * 10) / 10,
             bpm: b.bpm,
             beatCount: b.times.length,
             kickCount: b.kicks.length,
