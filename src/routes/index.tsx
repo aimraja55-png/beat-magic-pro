@@ -760,9 +760,8 @@ function Editor() {
   const filledCount = slots.filter(Boolean).length;
   const aspect: "9:16" | "16:9" = mode === "shorts" ? "9:16" : "16:9";
   const remainingToday = Math.max(0, dailyLimit() - usage);
-  const exactDurationSec = beats
-    ? beats.duration
-    : 0;
+  // Export length = the AI-selected high-impact window (15–20s), or full length if shorter
+  const exactDurationSec = beats ? beats.hookDuration : 0;
 
   useEffect(() => {
     setPro(isPro());
