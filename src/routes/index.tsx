@@ -1230,7 +1230,9 @@ function Editor() {
                 <div className="truncate text-sm font-semibold">🎵 {audioFile.name}</div>
                 <div className="mt-0.5 text-[11px] text-white/60">
                   {beats.duration.toFixed(1)}s • {beats.bpm} BPM • {beats.times.length} beats
-                  {mode === "long" && sessionOffset > 0.5 && ` • Resume @ ${sessionOffset.toFixed(1)}s`}
+                </div>
+                <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] font-semibold text-fuchsia-200">
+                  ⚡ AI Drop: {Math.floor(beats.hookStart / 60)}:{String(Math.floor(beats.hookStart % 60)).padStart(2, "0")} → {beats.hookDuration.toFixed(0)}s
                 </div>
               </div>
               <label className="shrink-0 cursor-pointer rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10">
