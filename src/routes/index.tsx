@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
 import { planEdit, type DirectorPlan } from "@/lib/director.functions";
 import { MASTER_STYLE, adaptiveHoldSeconds, microCutStride, refPick } from "@/lib/masterStyle";
+import { scanSpectrum, type SpectrumScan } from "@/lib/spectrum";
+import { buildSubjectCutout } from "@/lib/cutout";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -282,6 +284,8 @@ async function analyzeBeats(file: File): Promise<Beats> {
   const median = diffs[Math.floor(diffs.length / 2)] || 0.5;
   const bpm = Math.round(60 / median);
   const kickList = kicks.length >= 4 ? kicks : times;
+  // ── 32-BAND FULL-TRACK DEEP SPECTRUM SCAN (whole timeline, no positional limit) ──
+  const spec = scanSpectrum(audio, 0.25);
   // ── UNRESTRICTED FULL-TRACK DEEP SCAN: find the highest-impact 15–20s window ──
   const hook = findBestSegment({
     duration: audio.duration,
@@ -289,6 +293,7 @@ async function analyzeBeats(file: File): Promise<Beats> {
     fullEnv, kickEnv, clapEnv, hatEnv,
     kicks: kickList,
     bpm,
+    spec,
   });
   return {
     times, kicks: kickList, claps, hats, kickEnv, clapEnv, hatEnv,
@@ -306,7 +311,7 @@ async function analyzeBeats(file: File): Promise<Beats> {
 function findBestSegment(a: {
   duration: number; hop: number;
   fullEnv: Float32Array; kickEnv: Float32Array; clapEnv: Float32Array; hatEnv: Float32Array;
-  kicks: number[]; bpm: number;
+  kicks: number[]; bpm: number; spec?: SpectrumScan;
 }): { start: number; duration: number; score: number } {
   const MIN_LEN = 15, MAX_LEN = 20;
   if (a.duration <= MIN_LEN + 0.35) {
@@ -354,6 +359,20 @@ function findBestSegment(a: {
   const strideSec = 0.5;
   const lengths: number[] = [15, 16, 17, 18, 19, 20];
 
+  // 32-band spectral prefix sums (spectral flux = drop/transient impact,
+  // sub-bass = bass drop weight, air = climax brightness/energy lift)
+  const specFrame = a.spec ? a.spec.frameSec : 0;
+  const pFlux = a.spec ? prefix(Array.from(a.spec.flux)) : null;
+  const pSub = a.spec ? prefix(Array.from(a.spec.subBass)) : null;
+  const pAir = a.spec ? prefix(Array.from(a.spec.air)) : null;
+  const specAvg = (p: Float64Array | null, start: number, len: number) => {
+    if (!p || !specFrame) return 0;
+    const i0 = Math.max(0, Math.floor(start / specFrame));
+    const i1 = Math.min(p.length - 1, i0 + Math.max(1, Math.round(len / specFrame)));
+    const n = i1 - i0;
+    return n > 0 ? (p[i1] - p[i0]) / n : 0;
+  };
+
   for (let start = 0; start + MIN_LEN <= a.duration + 0.001; start += strideSec) {
     for (const len of lengths) {
       if (start + len > a.duration) continue;
@@ -372,6 +391,9 @@ function findBestSegment(a: {
       const firstHalf = (pFull[mid] - pFull[c0]) / Math.max(1, mid - c0);
       const secondHalf = (pFull[c1] - pFull[mid]) / Math.max(1, c1 - mid);
       const build = Math.max(0, secondHalf - firstHalf);
+      const flux = specAvg(pFlux, start, len);
+      const sub = specAvg(pSub, start, len);
+      const airE = specAvg(pAir, start, len);
       const score =
         energy * 3.0 +
         bass * 2.6 +
@@ -379,10 +401,14 @@ function findBestSegment(a: {
         Math.min(1.2, density / 3) * 1.4 +
         Math.max(0, lift) * 2.2 +
         build * 1.3 +
+        flux * 2.4 +
+        sub * 2.0 +
+        airE * 0.9 +
         (len / MAX_LEN) * 0.25; // gentle nudge toward the fuller 20s phrase
       if (score > best.score) best = { start, duration: len, score };
     }
   }
+
 
   // Snap the start onto the nearest strong kick so the cut lands on the transient
   let snapped = best.start;
@@ -432,6 +458,105 @@ function autoDownload(url: string, filename: string) {
   const a = document.createElement("a"); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
 }
+/* ---------------- Phase B: real MP4 export pipeline ---------------- */
+export type RenderMeta = { width: number; height: number; fps: number; duration: number };
+
+type EncodeMsg =
+  | { type: "progress"; progress: number; message?: string }
+  | { type: "log"; message: string }
+  | { type: "done"; buffer: ArrayBuffer }
+  | { type: "error"; message: string; category: string; logs: string[] };
+
+/**
+ * Frame-accurate H.264/AAC MP4 encode inside a WASM worker, with the moov atom and
+ * duration/timescale metadata injected (`-movflags +faststart`). If the worker cannot
+ * start (unsupported device), the already-MP4 preview buffer is used as-is.
+ */
+async function encodeToMp4(
+  source: Blob,
+  meta: RenderMeta,
+  onProgress: (p: number, message?: string) => void,
+): Promise<Blob> {
+  const buffer = await source.arrayBuffer();
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL("../workers/ffmpegEncode.worker.ts", import.meta.url), { type: "module" });
+  } catch {
+    if (source.type.includes("mp4")) return source;
+    throw new Error("Export engine इस डिवाइस पर लोड नहीं हो सका");
+  }
+  return await new Promise<Blob>((resolve, reject) => {
+    worker.onmessage = (e: MessageEvent<EncodeMsg>) => {
+      const d = e.data;
+      if (d.type === "progress") onProgress(d.progress, d.message);
+      else if (d.type === "done") { worker.terminate(); resolve(new Blob([d.buffer], { type: "video/mp4" })); }
+      else if (d.type === "error") {
+        worker.terminate();
+        if (source.type.includes("mp4")) resolve(source);
+        else reject(new Error(d.message));
+      }
+    };
+    worker.onerror = () => {
+      worker.terminate();
+      if (source.type.includes("mp4")) resolve(source); else reject(new Error("Export worker crash"));
+    };
+    worker.postMessage(
+      { type: "encode", webmBuffer: buffer, width: meta.width, height: meta.height, fps: meta.fps, duration: meta.duration },
+      [buffer],
+    );
+  });
+}
+
+type DirPickerWindow = Window & typeof globalThis & {
+  showDirectoryPicker?: () => Promise<{
+    getDirectoryHandle: (name: string, o: { create: boolean }) => Promise<{
+      getFileHandle: (name: string, o: { create: boolean }) => Promise<SavePickerHandle>;
+    }>;
+  }>;
+};
+
+/**
+ * Native gallery hand-off. A browser tab cannot call Android MediaScannerConnection or
+ * the iOS CameraRoll API directly, so the closest real equivalent is used, best first:
+ *  1. Web Share (Level 2) file share → Android/iOS system sheet → "Save to Photos/Gallery"
+ *  2. Directory picker → creates an "Albums/Raja AI Pro Editor" folder and writes there
+ *  3. Save-file picker → user-chosen location
+ *  4. Blob write fallback
+ */
+async function saveToGallery(blob: Blob, filename: string): Promise<"share" | "folder" | "picker" | "file"> {
+  const file = new File([blob], filename, { type: "video/mp4" });
+  const navAny = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
+  if (navAny.canShare?.({ files: [file] }) && navigator.share) {
+    try {
+      await navigator.share({ files: [file], title: "Raja AI Pro Editor" });
+      return "share";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
+  }
+  const dirPicker = (window as DirPickerWindow).showDirectoryPicker;
+  if (dirPicker) {
+    try {
+      const root = await dirPicker();
+      const album = await root.getDirectoryHandle("Albums", { create: true }).catch(() => null);
+      const target = album ?? root;
+      const dir = await (target as unknown as { getDirectoryHandle: (n: string, o: { create: boolean }) => Promise<{ getFileHandle: (n: string, o: { create: boolean }) => Promise<SavePickerHandle> }> })
+        .getDirectoryHandle("Raja AI Pro Editor", { create: true });
+      const handle = await dir.getFileHandle(filename, { create: true });
+      await saveWithFileHandle(handle, blob);
+      return "folder";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
+  }
+  const handle = await requestOutputFileHandle(filename, "video/mp4", "mp4");
+  if (handle) { await saveWithFileHandle(handle, blob); return "picker"; }
+  const url = URL.createObjectURL(blob);
+  autoDownload(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return "file";
+}
+
 function waitForNextPaint() { return new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); }
 function getBestRecorderMime() {
   const candidates = [
@@ -492,6 +617,7 @@ const EASE = (x: number) => 1 - Math.pow(1 - x, 3);
 function drawFrame(
   ctx: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, W: number, H: number,
   style: StylePack, progress: number, punch: number, flash: number, shimmer: number, lowPower = false,
+  dropSplit = 0, cutout: (CanvasImageSource & { width: number; height: number }) | null = null,
 ) {
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
   let filter = "";
@@ -706,6 +832,37 @@ function drawFrame(
     }
     ctx.globalAlpha = 1;
   }
+  // ── BEAT-SYNCED SUBJECT LAYERING (drop only) ──
+  // Normal timeline = untouched full-frame composite. On a bass/drop transient the
+  // pre-computed subject cutout is lifted off a stylised backdrop with a zoom-punch,
+  // parallax shift and neon edge glow, then merges back as the phrase decays.
+  if (cutout && dropSplit > 0.04) {
+    const k = Math.min(1, dropSplit);
+    ctx.save();
+    ctx.globalCompositeOperation = "overlay";
+    ctx.globalAlpha = 0.42 * k;
+    ctx.fillStyle = style.filter === "noir" ? "#0b0b14" : style.rotDir > 0 ? "#ff2e88" : "#12d1ff";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = 0.3 * k;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+
+    const fit = Math.min(W / cutout.width, H / cutout.height);
+    const s = fit * (1 + 0.16 * k + punch * 0.12 * k);
+    const dw = cutout.width * s, dh = cutout.height * s;
+    const px = Math.sin(progress * Math.PI * 2) * W * 0.035 * k * style.panX;
+    const py = -H * 0.02 * k;
+    ctx.save();
+    ctx.shadowColor = style.rotDir > 0 ? "rgba(255,46,136,0.9)" : "rgba(60,220,255,0.9)";
+    ctx.shadowBlur = (16 + 64 * k) * (W / 1080);
+    ctx.globalAlpha = Math.min(1, 0.72 + 0.28 * k);
+    ctx.drawImage(cutout, (W - dw) / 2 + px, (H - dh) / 2 + py, dw, dh);
+    ctx.restore();
+  }
+
   const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
   g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -753,8 +910,13 @@ function Editor() {
   const [quality, setQuality] = useState<QualityKey>("1080p");
   const [aiPlan, setAiPlan] = useState<DirectorPlan | null>(null);
   const [aiThinking, setAiThinking] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportPct, setExportPct] = useState(0);
+  const [exportMsg, setExportMsg] = useState("");
+  const [savedToast, setSavedToast] = useState(false);
 
   const renderIdRef = useRef(0);
+  const renderMetaRef = useRef<RenderMeta>({ width: 1080, height: 1920, fps: 60, duration: 15 });
 
   const photosNeeded = aiPlan
     ? aiPlan.photoCount
@@ -864,25 +1026,44 @@ function Editor() {
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
 
+  /**
+   * PHASE B — real CapCut-style export.
+   * The preview blob is re-encoded frame-by-frame through the FFmpeg/WASM worker into
+   * H.264/AAC MP4 with `-movflags +faststart` (moov atom + duration/timescale injected
+   * into the header), progress reported 1% → 100%, then handed to the device's native
+   * save/share sheet so it lands in the phone's Photos/Gallery.
+   */
   async function exportPreviewVideo() {
-    if (!videoBlob || !videoUrl) return;
+    if (!videoBlob) return;
     setExporting(true);
-    const ext = videoMime.includes("webm") ? "webm" : "mp4";
-    const filename = `raja-ai-video.${ext}`;
+    setExportOpen(true);
+    setExportPct(1);
+    setExportMsg("Export इंजन शुरू हो रहा है…");
+    setSavedToast(false);
     try {
-      const handle = await requestOutputFileHandle(filename, videoMime, ext);
-      if (handle) {
-        await saveWithFileHandle(handle, videoBlob);
-        setLog("✓ वीडियो सेव हो गया!");
-      } else {
-        autoDownload(videoUrl, filename);
-        setLog("✓ डाउनलोड शुरू हो गया!");
-      }
+      const meta = renderMetaRef.current;
+      const mp4 = await encodeToMp4(videoBlob, meta, (p, m) => {
+        setExportPct(Math.max(1, Math.min(99, Math.round(p * 100))));
+        if (m) setExportMsg(m);
+      });
+      setExportPct(100);
+      setExportMsg("Gallery में सेव हो रहा है…");
+      const how = await saveToGallery(mp4, `Raja-AI-${Date.now()}.mp4`);
+      setExportOpen(false);
+      setSavedToast(true);
+      setLog(
+        how === "share" ? "✓ Gallery/Share sheet में भेज दिया गया!"
+        : how === "folder" ? "✓ Albums/Raja AI Pro Editor फोल्डर में सेव हो गया!"
+        : how === "picker" ? "✓ चुनी हुई जगह पर सेव हो गया!"
+        : "✓ फ़ाइल सेव हो गई — Gallery/Downloads में देखें.",
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      setExportOpen(false);
       setLog(`Export error: ${msg}`);
     } finally { setExporting(false); }
   }
+
 
   async function tryGenerate() {
     if (!audioFile || !beats || filledCount === 0) return;
@@ -932,6 +1113,7 @@ function Editor() {
     // ── AI-SELECTED HIGH-IMPACT WINDOW: anywhere in the track, capped 15–20s ──
     const startOffset = beats.hookStart;
     const targetDuration = beats.hookDuration;
+    renderMetaRef.current = { width: W, height: H, fps: FPS, duration: targetDuration };
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
@@ -968,6 +1150,16 @@ function Editor() {
         setLog(`फोटो तैयार हो रही हैं… ${Math.min(photos.length, i + batch)}/${photos.length}`);
         await waitForNextPaint(); // yield → UI never freezes during decode
       }
+
+      // ── SUBJECT CUTOUTS (once per photo, reused for every frame) ──
+      // Foreground/background split used only on drop hits; ~0ms per frame at render time.
+      const cutouts: (CanvasImageSource & { width: number; height: number } | null)[] = [];
+      for (let i = 0; i < imgs.length; i++) {
+        const c = lowEnd ? null : buildSubjectCutout(imgs[i], Math.max(W, H) * 0.6);
+        cutouts.push(c ? c.canvas : null);
+        if (i % 2 === 1) await waitForNextPaint();
+      }
+      setLog("AI subject cutout तैयार — drop पर layering चालू");
 
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
@@ -1017,7 +1209,7 @@ function Editor() {
       };
 
       type DrawImg = CanvasImageSource & { width: number; height: number };
-      const seq: { img: DrawImg; style: StylePack }[] = [];
+      const seq: { img: DrawImg; style: StylePack; cutout: DrawImg | null }[] = [];
       const recentStyles: StylePack[] = [];
       // Zero-repetition memory across renders for this same audio file
       const bannedStyles = new Set<string>(getUsedStyles(audioFile));
@@ -1039,7 +1231,7 @@ function Editor() {
         const { mood } = segmentMood(beats, segA, segB);
         const style = styleForMood(mood, seed, recentStyles, bannedStyles, runSalt + i);
         if (isCalmAt((segA + segB) / 2)) { /* mood already resolves calm passages */ }
-        seq.push({ img: imgs[idx], style });
+        seq.push({ img: imgs[idx], style, cutout: cutouts[idx] ?? null });
         recentStyles.push(style);
         usedThisRun.push(style.base, style.entry, style.exit);
         if (recentStyles.length > 4) recentStyles.shift();
@@ -1093,6 +1285,7 @@ function Editor() {
       let lastFrameAt = performance.now();
       let lastDrawAt = 0;
       let lastProgress = -1;
+      let dropSplit = 0;
       const perfMem = (performance as Performance & {
         memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
       }).memory;
@@ -1133,7 +1326,10 @@ function Editor() {
         const flash = Math.min(1, sampleEnv(beats.clapEnv, beats.hop, abs) * MASTER_STYLE.blurGain * strengthGain);
         const shimmer = sampleEnv(beats.hatEnv, beats.hop, abs);
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
+        // ── DROP-SYNCED LAYER SPLIT: rises on a bass transient, snaps back smoothly ──
+        const target = punch > 0.6 ? Math.min(1, (punch - 0.6) / 0.32) : 0;
+        dropSplit += (target - dropSplit) * (target > dropSplit ? 0.55 : 0.12);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, lowPower ? 0 : dropSplit, item.cutout);
         if (drawWM) drawWatermark(ctx, W, H);
         // Throttle React updates to 1% steps — no re-render churn per frame
         const p = Math.min(0.95, (t / targetDuration) * 0.95);
@@ -1376,12 +1572,27 @@ function Editor() {
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
-              {exporting ? "SAVING…" : "⬇  DOWNLOAD (Gallery में सेव करें)"}
+              {exporting ? "EXPORTING…" : "⬇  EXPORT / SAVE (Gallery में सेव करें)"}
             </button>
             <button onClick={() => { setStage("ready"); setVideoUrl(null); setVideoBlob(null); setProgress(0); }}
               className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10">
               फिर से बनाएँ
             </button>
+          </div>
+        )}
+
+        {exportOpen && <ExportHud pct={exportPct} message={exportMsg} />}
+        {savedToast && (
+          <div className="fixed inset-x-4 bottom-6 z-[70] mx-auto max-w-md rounded-2xl border border-emerald-400/30 bg-emerald-500/15 p-4 text-center backdrop-blur-xl">
+            <div className="text-sm font-black">🎉 Saved directly to Gallery!</div>
+            <div className="mt-1 text-[11px] text-white/70">Albums › Raja AI Pro Editor</div>
+            <div className="mt-3 flex gap-2">
+              <button type="button"
+                onClick={() => { window.open("content://media/internal/images/media", "_blank"); }}
+                className="flex-1 rounded-xl bg-white py-2.5 text-xs font-black text-black">Open Gallery</button>
+              <button type="button" onClick={() => setSavedToast(false)}
+                className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-xs">बंद</button>
+            </div>
           </div>
         )}
 
@@ -1815,6 +2026,39 @@ function Celebration() {
         <div className="animate-[scale-in_0.4s_ease-out] rounded-full bg-white/10 px-8 py-4 text-2xl font-black backdrop-blur-2xl">🎉 तैयार है!</div>
       </div>
       <style>{`@keyframes confetti-fall { to { transform: translateY(110vh) rotate(720deg); opacity: 0.8; } }`}</style>
+    </div>
+  );
+}
+
+/* ---------------- CapCut-style 1% → 100% circular export HUD ---------------- */
+function ExportHud({ pct, message }: { pct: number; message: string }) {
+  const R = 54, C = 2 * Math.PI * R;
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-md">
+      <div className="w-[86%] max-w-sm rounded-3xl border border-white/10 bg-[#0d0718]/95 p-7 text-center">
+        <div className="relative mx-auto h-36 w-36">
+          <svg viewBox="0 0 128 128" className="h-full w-full -rotate-90">
+            <circle cx="64" cy="64" r={R} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" />
+            <circle cx="64" cy="64" r={R} fill="none" stroke="url(#rajaGrad)" strokeWidth="9" strokeLinecap="round"
+              strokeDasharray={C} strokeDashoffset={C * (1 - Math.max(0, Math.min(100, pct)) / 100)}
+              style={{ transition: "stroke-dashoffset 220ms linear" }} />
+            <defs>
+              <linearGradient id="rajaGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#ff2e88" />
+                <stop offset="55%" stopColor="#ff6a3d" />
+                <stop offset="100%" stopColor="#ffb347" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-3xl font-black tabular-nums">{Math.max(1, Math.round(pct))}%</div>
+            <div className="text-[9px] uppercase tracking-[0.28em] text-white/50">Exporting</div>
+          </div>
+        </div>
+        <div className="mt-5 text-sm font-bold">H.264 / AAC MP4 रेंडर हो रहा है</div>
+        <div className="mt-1 min-h-[16px] text-[11px] text-white/60">{message}</div>
+        <div className="mt-3 text-[10px] text-white/40">moov atom + duration metadata inject — 0s वाली खराब फ़ाइल कभी नहीं</div>
+      </div>
     </div>
   );
 }
