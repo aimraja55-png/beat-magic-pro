@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import fixWebmDuration from "fix-webm-duration";
 import { planEdit, type DirectorPlan } from "@/lib/director.functions";
 import { MASTER_STYLE, adaptiveHoldSeconds, microCutStride, refPick } from "@/lib/masterStyle";
+import { scanSpectrum, type SpectrumScan } from "@/lib/spectrum";
+import { buildSubjectCutout } from "@/lib/cutout";
 
 export const Route = createFileRoute("/")({
   head: () => ({
