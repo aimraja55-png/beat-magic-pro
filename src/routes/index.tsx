@@ -1085,7 +1085,7 @@ function Editor() {
       };
 
       type DrawImg = CanvasImageSource & { width: number; height: number };
-      const seq: { img: DrawImg; style: StylePack }[] = [];
+      const seq: { img: DrawImg; style: StylePack; cutout: DrawImg | null }[] = [];
       const recentStyles: StylePack[] = [];
       // Zero-repetition memory across renders for this same audio file
       const bannedStyles = new Set<string>(getUsedStyles(audioFile));
@@ -1107,7 +1107,7 @@ function Editor() {
         const { mood } = segmentMood(beats, segA, segB);
         const style = styleForMood(mood, seed, recentStyles, bannedStyles, runSalt + i);
         if (isCalmAt((segA + segB) / 2)) { /* mood already resolves calm passages */ }
-        seq.push({ img: imgs[idx], style });
+        seq.push({ img: imgs[idx], style, cutout: cutouts[idx] ?? null });
         recentStyles.push(style);
         usedThisRun.push(style.base, style.entry, style.exit);
         if (recentStyles.length > 4) recentStyles.shift();
@@ -1161,6 +1161,7 @@ function Editor() {
       let lastFrameAt = performance.now();
       let lastDrawAt = 0;
       let lastProgress = -1;
+      let dropSplit = 0;
       const perfMem = (performance as Performance & {
         memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number };
       }).memory;
@@ -1201,7 +1202,10 @@ function Editor() {
         const flash = Math.min(1, sampleEnv(beats.clapEnv, beats.hop, abs) * MASTER_STYLE.blurGain * strengthGain);
         const shimmer = sampleEnv(beats.hatEnv, beats.hop, abs);
         const item = seq[Math.min(i, seq.length - 1)];
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower);
+        // ── DROP-SYNCED LAYER SPLIT: rises on a bass transient, snaps back smoothly ──
+        const target = punch > 0.6 ? Math.min(1, (punch - 0.6) / 0.32) : 0;
+        dropSplit += (target - dropSplit) * (target > dropSplit ? 0.55 : 0.12);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, lowPower ? 0 : dropSplit, item.cutout);
         if (drawWM) drawWatermark(ctx, W, H);
         // Throttle React updates to 1% steps — no re-render churn per frame
         const p = Math.min(0.95, (t / targetDuration) * 0.95);
