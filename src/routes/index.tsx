@@ -284,6 +284,8 @@ async function analyzeBeats(file: File): Promise<Beats> {
   const median = diffs[Math.floor(diffs.length / 2)] || 0.5;
   const bpm = Math.round(60 / median);
   const kickList = kicks.length >= 4 ? kicks : times;
+  // ── 32-BAND FULL-TRACK DEEP SPECTRUM SCAN (whole timeline, no positional limit) ──
+  const spec = scanSpectrum(audio, 0.25);
   // ── UNRESTRICTED FULL-TRACK DEEP SCAN: find the highest-impact 15–20s window ──
   const hook = findBestSegment({
     duration: audio.duration,
@@ -291,6 +293,7 @@ async function analyzeBeats(file: File): Promise<Beats> {
     fullEnv, kickEnv, clapEnv, hatEnv,
     kicks: kickList,
     bpm,
+    spec,
   });
   return {
     times, kicks: kickList, claps, hats, kickEnv, clapEnv, hatEnv,
