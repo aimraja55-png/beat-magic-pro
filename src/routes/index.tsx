@@ -458,6 +458,105 @@ function autoDownload(url: string, filename: string) {
   const a = document.createElement("a"); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
 }
+/* ---------------- Phase B: real MP4 export pipeline ---------------- */
+export type RenderMeta = { width: number; height: number; fps: number; duration: number };
+
+type EncodeMsg =
+  | { type: "progress"; progress: number; message?: string }
+  | { type: "log"; message: string }
+  | { type: "done"; buffer: ArrayBuffer }
+  | { type: "error"; message: string; category: string; logs: string[] };
+
+/**
+ * Frame-accurate H.264/AAC MP4 encode inside a WASM worker, with the moov atom and
+ * duration/timescale metadata injected (`-movflags +faststart`). If the worker cannot
+ * start (unsupported device), the already-MP4 preview buffer is used as-is.
+ */
+async function encodeToMp4(
+  source: Blob,
+  meta: RenderMeta,
+  onProgress: (p: number, message?: string) => void,
+): Promise<Blob> {
+  const buffer = await source.arrayBuffer();
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL("../workers/ffmpegEncode.worker.ts", import.meta.url), { type: "module" });
+  } catch {
+    if (source.type.includes("mp4")) return source;
+    throw new Error("Export engine इस डिवाइस पर लोड नहीं हो सका");
+  }
+  return await new Promise<Blob>((resolve, reject) => {
+    worker.onmessage = (e: MessageEvent<EncodeMsg>) => {
+      const d = e.data;
+      if (d.type === "progress") onProgress(d.progress, d.message);
+      else if (d.type === "done") { worker.terminate(); resolve(new Blob([d.buffer], { type: "video/mp4" })); }
+      else if (d.type === "error") {
+        worker.terminate();
+        if (source.type.includes("mp4")) resolve(source);
+        else reject(new Error(d.message));
+      }
+    };
+    worker.onerror = () => {
+      worker.terminate();
+      if (source.type.includes("mp4")) resolve(source); else reject(new Error("Export worker crash"));
+    };
+    worker.postMessage(
+      { type: "encode", webmBuffer: buffer, width: meta.width, height: meta.height, fps: meta.fps, duration: meta.duration },
+      [buffer],
+    );
+  });
+}
+
+type DirPickerWindow = Window & typeof globalThis & {
+  showDirectoryPicker?: () => Promise<{
+    getDirectoryHandle: (name: string, o: { create: boolean }) => Promise<{
+      getFileHandle: (name: string, o: { create: boolean }) => Promise<SavePickerHandle>;
+    }>;
+  }>;
+};
+
+/**
+ * Native gallery hand-off. A browser tab cannot call Android MediaScannerConnection or
+ * the iOS CameraRoll API directly, so the closest real equivalent is used, best first:
+ *  1. Web Share (Level 2) file share → Android/iOS system sheet → "Save to Photos/Gallery"
+ *  2. Directory picker → creates an "Albums/Raja AI Pro Editor" folder and writes there
+ *  3. Save-file picker → user-chosen location
+ *  4. Blob write fallback
+ */
+async function saveToGallery(blob: Blob, filename: string): Promise<"share" | "folder" | "picker" | "file"> {
+  const file = new File([blob], filename, { type: "video/mp4" });
+  const navAny = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
+  if (navAny.canShare?.({ files: [file] }) && navigator.share) {
+    try {
+      await navigator.share({ files: [file], title: "Raja AI Pro Editor" });
+      return "share";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
+  }
+  const dirPicker = (window as DirPickerWindow).showDirectoryPicker;
+  if (dirPicker) {
+    try {
+      const root = await dirPicker();
+      const album = await root.getDirectoryHandle("Albums", { create: true }).catch(() => null);
+      const target = album ?? root;
+      const dir = await (target as unknown as { getDirectoryHandle: (n: string, o: { create: boolean }) => Promise<{ getFileHandle: (n: string, o: { create: boolean }) => Promise<SavePickerHandle> }> })
+        .getDirectoryHandle("Raja AI Pro Editor", { create: true });
+      const handle = await dir.getFileHandle(filename, { create: true });
+      await saveWithFileHandle(handle, blob);
+      return "folder";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
+  }
+  const handle = await requestOutputFileHandle(filename, "video/mp4", "mp4");
+  if (handle) { await saveWithFileHandle(handle, blob); return "picker"; }
+  const url = URL.createObjectURL(blob);
+  autoDownload(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return "file";
+}
+
 function waitForNextPaint() { return new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); }
 function getBestRecorderMime() {
   const candidates = [
@@ -811,8 +910,13 @@ function Editor() {
   const [quality, setQuality] = useState<QualityKey>("1080p");
   const [aiPlan, setAiPlan] = useState<DirectorPlan | null>(null);
   const [aiThinking, setAiThinking] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportPct, setExportPct] = useState(0);
+  const [exportMsg, setExportMsg] = useState("");
+  const [savedToast, setSavedToast] = useState(false);
 
   const renderIdRef = useRef(0);
+  const renderMetaRef = useRef<RenderMeta>({ width: 1080, height: 1920, fps: 60, duration: 15 });
 
   const photosNeeded = aiPlan
     ? aiPlan.photoCount
