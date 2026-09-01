@@ -1027,6 +1027,16 @@ function Editor() {
         await waitForNextPaint(); // yield → UI never freezes during decode
       }
 
+      // ── SUBJECT CUTOUTS (once per photo, reused for every frame) ──
+      // Foreground/background split used only on drop hits; ~0ms per frame at render time.
+      const cutouts: (CanvasImageSource & { width: number; height: number } | null)[] = [];
+      for (let i = 0; i < imgs.length; i++) {
+        const c = lowEnd ? null : buildSubjectCutout(imgs[i], Math.max(W, H) * 0.6);
+        cutouts.push(c ? c.canvas : null);
+        if (i % 2 === 1) await waitForNextPaint();
+      }
+      setLog("AI subject cutout तैयार — drop पर layering चालू");
+
       // ── DEEP-EMOTIONAL BEAT MAPPING ──
       // Classify the whole song first — dictates cut density + effect ferocity
       const localIntensity = classifyIntensity(beats.kickEnv);
