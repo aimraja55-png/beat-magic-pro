@@ -74,7 +74,7 @@ async function loadFFmpeg() {
   ffmpeg.on("log", ({ message }) => rememberLog(message));
   ffmpeg.on("progress", ({ progress }) => {
     const rawProgress = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
-    const safeProgress = Math.max(0.3, Math.min(0.95, 0.3 + rawProgress * 0.65));
+    const safeProgress = Math.max(0.05, Math.min(0.97, 0.05 + rawProgress * 0.92));
     post({ type: "progress", progress: safeProgress, message: "MP4 finalization" });
   });
 
@@ -153,6 +153,18 @@ async function encode({ webmBuffer, width, height, fps, duration }: EncodeReques
       "make_zero",
       "-flush_packets",
       "1",
+      // CapCut-grade container header: moov atom up front + explicit duration/timescale
+      // metadata so the gallery never reads the file as 0s / blank / corrupt.
+      "-movflags",
+      "+faststart",
+      "-video_track_timescale",
+      String(fps * 1000),
+      "-metadata",
+      `duration=${duration.toFixed(3)}`,
+      "-metadata",
+      "title=Raja AI Pro Editor",
+      "-metadata",
+      "comment=Rendered by Raja AI Pro Editor",
       outputName,
     ],
   );
