@@ -922,25 +922,44 @@ function Editor() {
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
 
+  /**
+   * PHASE B — real CapCut-style export.
+   * The preview blob is re-encoded frame-by-frame through the FFmpeg/WASM worker into
+   * H.264/AAC MP4 with `-movflags +faststart` (moov atom + duration/timescale injected
+   * into the header), progress reported 1% → 100%, then handed to the device's native
+   * save/share sheet so it lands in the phone's Photos/Gallery.
+   */
   async function exportPreviewVideo() {
-    if (!videoBlob || !videoUrl) return;
+    if (!videoBlob) return;
     setExporting(true);
-    const ext = videoMime.includes("webm") ? "webm" : "mp4";
-    const filename = `raja-ai-video.${ext}`;
+    setExportOpen(true);
+    setExportPct(1);
+    setExportMsg("Export इंजन शुरू हो रहा है…");
+    setSavedToast(false);
     try {
-      const handle = await requestOutputFileHandle(filename, videoMime, ext);
-      if (handle) {
-        await saveWithFileHandle(handle, videoBlob);
-        setLog("✓ वीडियो सेव हो गया!");
-      } else {
-        autoDownload(videoUrl, filename);
-        setLog("✓ डाउनलोड शुरू हो गया!");
-      }
+      const meta = renderMetaRef.current;
+      const mp4 = await encodeToMp4(videoBlob, meta, (p, m) => {
+        setExportPct(Math.max(1, Math.min(99, Math.round(p * 100))));
+        if (m) setExportMsg(m);
+      });
+      setExportPct(100);
+      setExportMsg("Gallery में सेव हो रहा है…");
+      const how = await saveToGallery(mp4, `Raja-AI-${Date.now()}.mp4`);
+      setExportOpen(false);
+      setSavedToast(true);
+      setLog(
+        how === "share" ? "✓ Gallery/Share sheet में भेज दिया गया!"
+        : how === "folder" ? "✓ Albums/Raja AI Pro Editor फोल्डर में सेव हो गया!"
+        : how === "picker" ? "✓ चुनी हुई जगह पर सेव हो गया!"
+        : "✓ फ़ाइल सेव हो गई — Gallery/Downloads में देखें.",
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      setExportOpen(false);
       setLog(`Export error: ${msg}`);
     } finally { setExporting(false); }
   }
+
 
   async function tryGenerate() {
     if (!audioFile || !beats || filledCount === 0) return;
