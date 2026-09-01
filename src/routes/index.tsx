@@ -359,6 +359,20 @@ function findBestSegment(a: {
   const strideSec = 0.5;
   const lengths: number[] = [15, 16, 17, 18, 19, 20];
 
+  // 32-band spectral prefix sums (spectral flux = drop/transient impact,
+  // sub-bass = bass drop weight, air = climax brightness/energy lift)
+  const specFrame = a.spec ? a.spec.frameSec : 0;
+  const pFlux = a.spec ? prefix(Array.from(a.spec.flux)) : null;
+  const pSub = a.spec ? prefix(Array.from(a.spec.subBass)) : null;
+  const pAir = a.spec ? prefix(Array.from(a.spec.air)) : null;
+  const specAvg = (p: Float64Array | null, start: number, len: number) => {
+    if (!p || !specFrame) return 0;
+    const i0 = Math.max(0, Math.floor(start / specFrame));
+    const i1 = Math.min(p.length - 1, i0 + Math.max(1, Math.round(len / specFrame)));
+    const n = i1 - i0;
+    return n > 0 ? (p[i1] - p[i0]) / n : 0;
+  };
+
   for (let start = 0; start + MIN_LEN <= a.duration + 0.001; start += strideSec) {
     for (const len of lengths) {
       if (start + len > a.duration) continue;
@@ -377,6 +391,9 @@ function findBestSegment(a: {
       const firstHalf = (pFull[mid] - pFull[c0]) / Math.max(1, mid - c0);
       const secondHalf = (pFull[c1] - pFull[mid]) / Math.max(1, c1 - mid);
       const build = Math.max(0, secondHalf - firstHalf);
+      const flux = specAvg(pFlux, start, len);
+      const sub = specAvg(pSub, start, len);
+      const airE = specAvg(pAir, start, len);
       const score =
         energy * 3.0 +
         bass * 2.6 +
@@ -384,10 +401,14 @@ function findBestSegment(a: {
         Math.min(1.2, density / 3) * 1.4 +
         Math.max(0, lift) * 2.2 +
         build * 1.3 +
+        flux * 2.4 +
+        sub * 2.0 +
+        airE * 0.9 +
         (len / MAX_LEN) * 0.25; // gentle nudge toward the fuller 20s phrase
       if (score > best.score) best = { start, duration: len, score };
     }
   }
+
 
   // Snap the start onto the nearest strong kick so the cut lands on the transient
   let snapped = best.start;
