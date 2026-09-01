@@ -311,7 +311,7 @@ async function analyzeBeats(file: File): Promise<Beats> {
 function findBestSegment(a: {
   duration: number; hop: number;
   fullEnv: Float32Array; kickEnv: Float32Array; clapEnv: Float32Array; hatEnv: Float32Array;
-  kicks: number[]; bpm: number;
+  kicks: number[]; bpm: number; spec?: SpectrumScan;
 }): { start: number; duration: number; score: number } {
   const MIN_LEN = 15, MAX_LEN = 20;
   if (a.duration <= MIN_LEN + 0.35) {
