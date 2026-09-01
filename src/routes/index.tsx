@@ -1113,6 +1113,7 @@ function Editor() {
     // ── AI-SELECTED HIGH-IMPACT WINDOW: anywhere in the track, capped 15–20s ──
     const startOffset = beats.hookStart;
     const targetDuration = beats.hookDuration;
+    renderMetaRef.current = { width: W, height: H, fps: FPS, duration: targetDuration };
 
     const imageUrls: string[] = [];
     const bitmaps: ImageBitmap[] = [];
@@ -1571,12 +1572,27 @@ function Editor() {
             <button type="button" disabled={exporting || !videoBlob}
               onClick={() => void exportPreviewVideo()}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-4 text-base font-black tracking-[0.12em] text-black shadow-[0_18px_55px_-18px_rgba(255,255,255,0.8)] transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60">
-              {exporting ? "SAVING…" : "⬇  DOWNLOAD (Gallery में सेव करें)"}
+              {exporting ? "EXPORTING…" : "⬇  EXPORT / SAVE (Gallery में सेव करें)"}
             </button>
             <button onClick={() => { setStage("ready"); setVideoUrl(null); setVideoBlob(null); setProgress(0); }}
               className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 py-3 text-sm hover:bg-white/10">
               फिर से बनाएँ
             </button>
+          </div>
+        )}
+
+        {exportOpen && <ExportHud pct={exportPct} message={exportMsg} />}
+        {savedToast && (
+          <div className="fixed inset-x-4 bottom-6 z-[70] mx-auto max-w-md rounded-2xl border border-emerald-400/30 bg-emerald-500/15 p-4 text-center backdrop-blur-xl">
+            <div className="text-sm font-black">🎉 Saved directly to Gallery!</div>
+            <div className="mt-1 text-[11px] text-white/70">Albums › Raja AI Pro Editor</div>
+            <div className="mt-3 flex gap-2">
+              <button type="button"
+                onClick={() => { window.open("content://media/internal/images/media", "_blank"); }}
+                className="flex-1 rounded-xl bg-white py-2.5 text-xs font-black text-black">Open Gallery</button>
+              <button type="button" onClick={() => setSavedToast(false)}
+                className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-xs">बंद</button>
+            </div>
           </div>
         )}
 
@@ -2010,6 +2026,39 @@ function Celebration() {
         <div className="animate-[scale-in_0.4s_ease-out] rounded-full bg-white/10 px-8 py-4 text-2xl font-black backdrop-blur-2xl">🎉 तैयार है!</div>
       </div>
       <style>{`@keyframes confetti-fall { to { transform: translateY(110vh) rotate(720deg); opacity: 0.8; } }`}</style>
+    </div>
+  );
+}
+
+/* ---------------- CapCut-style 1% → 100% circular export HUD ---------------- */
+function ExportHud({ pct, message }: { pct: number; message: string }) {
+  const R = 54, C = 2 * Math.PI * R;
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-md">
+      <div className="w-[86%] max-w-sm rounded-3xl border border-white/10 bg-[#0d0718]/95 p-7 text-center">
+        <div className="relative mx-auto h-36 w-36">
+          <svg viewBox="0 0 128 128" className="h-full w-full -rotate-90">
+            <circle cx="64" cy="64" r={R} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="9" />
+            <circle cx="64" cy="64" r={R} fill="none" stroke="url(#rajaGrad)" strokeWidth="9" strokeLinecap="round"
+              strokeDasharray={C} strokeDashoffset={C * (1 - Math.max(0, Math.min(100, pct)) / 100)}
+              style={{ transition: "stroke-dashoffset 220ms linear" }} />
+            <defs>
+              <linearGradient id="rajaGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#ff2e88" />
+                <stop offset="55%" stopColor="#ff6a3d" />
+                <stop offset="100%" stopColor="#ffb347" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-3xl font-black tabular-nums">{Math.max(1, Math.round(pct))}%</div>
+            <div className="text-[9px] uppercase tracking-[0.28em] text-white/50">Exporting</div>
+          </div>
+        </div>
+        <div className="mt-5 text-sm font-bold">H.264 / AAC MP4 रेंडर हो रहा है</div>
+        <div className="mt-1 min-h-[16px] text-[11px] text-white/60">{message}</div>
+        <div className="mt-3 text-[10px] text-white/40">moov atom + duration metadata inject — 0s वाली खराब फ़ाइल कभी नहीं</div>
+      </div>
     </div>
   );
 }
