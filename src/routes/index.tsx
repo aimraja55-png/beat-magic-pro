@@ -950,6 +950,10 @@ function Editor() {
   const [exportPct, setExportPct] = useState(0);
   const [exportMsg, setExportMsg] = useState("");
   const [savedToast, setSavedToast] = useState(false);
+  // Asset-preparation stage (1/N → N/N)
+  const [prepIdx, setPrepIdx] = useState(0);
+  const [prepTotal, setPrepTotal] = useState(0);
+  const [prepLabel, setPrepLabel] = useState("");
 
   const renderIdRef = useRef(0);
   const renderMetaRef = useRef<RenderMeta>({ width: 1080, height: 1920, fps: 60, duration: 15 });
