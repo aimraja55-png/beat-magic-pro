@@ -37,7 +37,7 @@ type Beats = {
   hookDuration: number;
   hookScore: number;
 };
-type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
+type Stage = "idle" | "analyzing" | "ready" | "ad" | "preparing" | "rendering" | "done";
 type QualityKey = "480p" | "720p" | "1080p" | "4k";
 type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
 const QUALITIES: Record<QualityKey, QualityCfg> = {
