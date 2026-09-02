@@ -1073,8 +1073,9 @@ function Editor() {
    * into the header), progress reported 1% → 100%, then handed to the device's native
    * save/share sheet so it lands in the phone's Photos/Gallery.
    */
-  async function exportPreviewVideo() {
-    if (!videoBlob) return;
+  async function exportPreviewVideo(blobArg?: Blob) {
+    const source = blobArg ?? videoBlob;
+    if (!source) return;
     setExporting(true);
     setExportOpen(true);
     setExportPct(1);
@@ -1082,7 +1083,7 @@ function Editor() {
     setSavedToast(false);
     try {
       const meta = renderMetaRef.current;
-      const mp4 = await encodeToMp4(videoBlob, meta, (p, m) => {
+      const mp4 = await encodeToMp4(source, meta, (p, m) => {
         setExportPct(Math.max(1, Math.min(99, Math.round(p * 100))));
         if (m) setExportMsg(m);
       });
