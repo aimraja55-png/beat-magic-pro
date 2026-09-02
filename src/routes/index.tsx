@@ -1145,6 +1145,17 @@ function Editor() {
     const FPS = cfg.fps;
     const bitrate = cfg.bitrate;
     const drawWM = !pro; // watermark for free users
+    if (drawWM) {
+      preloadWatermarkLogo();
+      if (wmLogo && !wmLogoReady) {
+        await new Promise<void>((res) => {
+          const done = () => res();
+          wmLogo!.decode?.().then(done).catch(done) ?? done();
+          setTimeout(done, 1500);
+        });
+        wmLogoReady = true;
+      }
+    }
 
     // ── AI-SELECTED HIGH-IMPACT WINDOW: anywhere in the track, capped 15–20s ──
     const startOffset = beats.hookStart;
