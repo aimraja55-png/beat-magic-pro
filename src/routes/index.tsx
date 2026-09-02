@@ -37,7 +37,7 @@ type Beats = {
   hookDuration: number;
   hookScore: number;
 };
-type Stage = "idle" | "analyzing" | "ready" | "ad" | "rendering" | "done";
+type Stage = "idle" | "analyzing" | "ready" | "ad" | "preparing" | "rendering" | "done";
 type QualityKey = "480p" | "720p" | "1080p" | "4k";
 type QualityCfg = { label: QualityKey; wShort: number; hShort: number; wLong: number; hLong: number; bitrate: number; fps: number };
 const QUALITIES: Record<QualityKey, QualityCfg> = {
@@ -950,6 +950,10 @@ function Editor() {
   const [exportPct, setExportPct] = useState(0);
   const [exportMsg, setExportMsg] = useState("");
   const [savedToast, setSavedToast] = useState(false);
+  // Asset-preparation stage (1/N → N/N)
+  const [prepIdx, setPrepIdx] = useState(0);
+  const [prepTotal, setPrepTotal] = useState(0);
+  const [prepLabel, setPrepLabel] = useState("");
 
   const renderIdRef = useRef(0);
   const renderMetaRef = useRef<RenderMeta>({ width: 1080, height: 1920, fps: 60, duration: 15 });
@@ -1069,8 +1073,9 @@ function Editor() {
    * into the header), progress reported 1% → 100%, then handed to the device's native
    * save/share sheet so it lands in the phone's Photos/Gallery.
    */
-  async function exportPreviewVideo() {
-    if (!videoBlob) return;
+  async function exportPreviewVideo(blobArg?: Blob) {
+    const source = blobArg ?? videoBlob;
+    if (!source) return;
     setExporting(true);
     setExportOpen(true);
     setExportPct(1);
@@ -1078,7 +1083,7 @@ function Editor() {
     setSavedToast(false);
     try {
       const meta = renderMetaRef.current;
-      const mp4 = await encodeToMp4(videoBlob, meta, (p, m) => {
+      const mp4 = await encodeToMp4(source, meta, (p, m) => {
         setExportPct(Math.max(1, Math.min(99, Math.round(p * 100))));
         if (m) setExportMsg(m);
       });
@@ -1126,11 +1131,16 @@ function Editor() {
     if (photos.length === 0) return;
 
     const myId = ++renderIdRef.current;
-    setStage("rendering");
+    // PHASE 1 — dedicated asset-preparation interface (1/N → N/N)
+    setStage("preparing");
+    setPrepTotal(photos.length);
+    setPrepIdx(0);
+    setPrepLabel("Assets को music के साथ sync किया जा रहा है…");
     setProgress(0);
     setPhase("record");
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
     setLog("रेंडर शुरू…");
+
 
     // Adaptive: user-chosen quality, downgraded on low-end devices to avoid Aw-Snap
     const nav = navigator as Navigator & { deviceMemory?: number };
