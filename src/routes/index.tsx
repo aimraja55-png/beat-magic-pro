@@ -868,18 +868,54 @@ function drawFrame(
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
-function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  const pad = Math.round(W * 0.02);
-  const fontSize = Math.round(H * 0.028);
+/* ---------------- LOGO WATERMARK (diagonal cross, exact timing) ----------------
+   One cycle per corner: fade-in 0.5s → hold 2.5s → fade-out 0.5s → 1.0s gap = 4.5s.
+   Corners rotate diagonally: bottom-right → top-left → bottom-left → top-right. */
+const WM_IN = 0.5, WM_HOLD = 2.5, WM_OUT = 0.5, WM_GAP = 1.0;
+const WM_CYCLE = WM_IN + WM_HOLD + WM_OUT + WM_GAP;
+const WM_CORNERS: Array<[number, number]> = [
+  [1, 1], // bottom-right
+  [0, 0], // top-left
+  [0, 1], // bottom-left
+  [1, 0], // top-right
+];
+
+let wmLogo: HTMLImageElement | null = null;
+let wmLogoReady = false;
+export function preloadWatermarkLogo() {
+  if (wmLogo || typeof window === "undefined") return;
+  const img = new Image();
+  img.decoding = "sync";
+  img.onload = () => { wmLogoReady = true; };
+  img.src = "/icon-512.png";
+  wmLogo = img;
+}
+
+function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
+  if (!wmLogo || !wmLogoReady) return;
+  const local = ((t % WM_CYCLE) + WM_CYCLE) % WM_CYCLE;
+  let alpha = 0;
+  if (local < WM_IN) alpha = local / WM_IN;
+  else if (local < WM_IN + WM_HOLD) alpha = 1;
+  else if (local < WM_IN + WM_HOLD + WM_OUT) alpha = 1 - (local - WM_IN - WM_HOLD) / WM_OUT;
+  else return; // 1s gap — fully invisible
+  if (alpha <= 0.001) return;
+
+  const idx = Math.floor(t / WM_CYCLE) % WM_CORNERS.length;
+  const [cx, cy] = WM_CORNERS[idx];
+  const size = Math.round(Math.min(W, H) * 0.16);
+  const pad = Math.round(Math.min(W, H) * 0.045);
+  const x = cx === 0 ? pad : W - pad - size;
+  const y = cy === 0 ? pad : H - pad - size;
+
   ctx.save();
-  ctx.font = `bold ${fontSize}px system-ui, -apple-system, sans-serif`;
-  ctx.textBaseline = "bottom";
-  const text = "Raja AI Pro-Editor";
-  const w = ctx.measureText(text).width;
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.fillRect(W - w - pad * 2.2, H - fontSize - pad * 1.6, w + pad * 1.4, fontSize + pad * 0.8);
-  ctx.fillStyle = "rgba(255,255,255,0.92)";
-  ctx.fillText(text, W - w - pad * 1.5, H - pad * 0.7);
+  ctx.globalAlpha = Math.min(1, alpha) * 0.92;
+  // subtle scale-in on the fade so the appearance reads crisply
+  const s = 0.94 + 0.06 * Math.min(1, alpha);
+  const dw = size * s, dh = size * s;
+  ctx.shadowColor = "rgba(0,0,0,0.55)";
+  ctx.shadowBlur = size * 0.16;
+  ctx.drawImage(wmLogo, x + (size - dw) / 2, y + (size - dh) / 2, dw, dh);
   ctx.restore();
 }
 
