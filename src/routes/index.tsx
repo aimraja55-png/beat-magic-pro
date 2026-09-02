@@ -1131,11 +1131,16 @@ function Editor() {
     if (photos.length === 0) return;
 
     const myId = ++renderIdRef.current;
-    setStage("rendering");
+    // PHASE 1 — dedicated asset-preparation interface (1/N → N/N)
+    setStage("preparing");
+    setPrepTotal(photos.length);
+    setPrepIdx(0);
+    setPrepLabel("Assets को music के साथ sync किया जा रहा है…");
     setProgress(0);
     setPhase("record");
     setVideoUrl(null); setVideoBlob(null); setCelebrate(false);
     setLog("रेंडर शुरू…");
+
 
     // Adaptive: user-chosen quality, downgraded on low-end devices to avoid Aw-Snap
     const nav = navigator as Navigator & { deviceMemory?: number };
