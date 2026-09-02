@@ -1366,7 +1366,7 @@ function Editor() {
         const target = punch > 0.6 ? Math.min(1, (punch - 0.6) / 0.32) : 0;
         dropSplit += (target - dropSplit) * (target > dropSplit ? 0.55 : 0.12);
         if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, lowPower ? 0 : dropSplit, item.cutout);
-        if (drawWM) drawWatermark(ctx, W, H);
+        if (drawWM) drawWatermark(ctx, W, H, t);
         // Throttle React updates to 1% steps — no re-render churn per frame
         const p = Math.min(0.95, (t / targetDuration) * 0.95);
         if (p - lastProgress >= 0.01) { lastProgress = p; setProgress(p); }
