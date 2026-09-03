@@ -5,6 +5,7 @@ import { planEdit, type DirectorPlan } from "@/lib/director.functions";
 import { MASTER_STYLE, adaptiveHoldSeconds, microCutStride, refPick } from "@/lib/masterStyle";
 import { scanSpectrum, type SpectrumScan } from "@/lib/spectrum";
 import { buildSubjectCutout } from "@/lib/cutout";
+import wmLogoAsset from "@/assets/beat-singh-logo.png.asset.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
