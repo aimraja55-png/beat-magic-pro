@@ -5,6 +5,7 @@ import { planEdit, type DirectorPlan } from "@/lib/director.functions";
 import { MASTER_STYLE, adaptiveHoldSeconds, microCutStride, refPick } from "@/lib/masterStyle";
 import { scanSpectrum, type SpectrumScan } from "@/lib/spectrum";
 import { buildSubjectCutout } from "@/lib/cutout";
+import wmLogoAsset from "@/assets/beat-singh-logo.png.asset.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -868,16 +869,19 @@ function drawFrame(
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
-/* ---------------- LOGO WATERMARK (diagonal cross, exact timing) ----------------
-   One cycle per corner: fade-in 0.5s → hold 2.5s → fade-out 0.5s → 1.0s gap = 4.5s.
-   Corners rotate diagonally: bottom-right → top-left → bottom-left → top-right. */
-const WM_IN = 0.5, WM_HOLD = 2.5, WM_OUT = 0.5, WM_GAP = 1.0;
+/* ---------------- LOGO WATERMARK (reference-video exact match) ----------------
+   Geometry measured from the reference clip (1080x1920):
+     logo width  ≈ 103px  → 0.095 * canvas width
+     right inset ≈  78px  → 0.072 * W ;  top inset ≈ 62px → 0.058 * W
+   Timing per corner: fade-in 1s (blur → sharp) → hold 1s solid → fade-out 1s
+   (sharp → blur) → 1s gap → next corner. 4s cycle, diagonal cross rotation. */
+const WM_IN = 1.0, WM_HOLD = 1.0, WM_OUT = 1.0, WM_GAP = 1.0;
 const WM_CYCLE = WM_IN + WM_HOLD + WM_OUT + WM_GAP;
 const WM_CORNERS: Array<[number, number]> = [
-  [1, 1], // bottom-right
-  [0, 0], // top-left
+  [1, 0], // top-right (as the reference video starts)
   [0, 1], // bottom-left
-  [1, 0], // top-right
+  [0, 0], // top-left
+  [1, 1], // bottom-right
 ];
 
 let wmLogo: HTMLImageElement | null = null;
@@ -887,7 +891,7 @@ export function preloadWatermarkLogo() {
   const img = new Image();
   img.decoding = "sync";
   img.onload = () => { wmLogoReady = true; };
-  img.src = "/icon-512.png";
+  img.src = wmLogoAsset.url;
   wmLogo = img;
 }
 
@@ -895,29 +899,33 @@ function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number, t: n
   if (!wmLogo || !wmLogoReady) return;
   const local = ((t % WM_CYCLE) + WM_CYCLE) % WM_CYCLE;
   let alpha = 0;
-  if (local < WM_IN) alpha = local / WM_IN;
-  else if (local < WM_IN + WM_HOLD) alpha = 1;
-  else if (local < WM_IN + WM_HOLD + WM_OUT) alpha = 1 - (local - WM_IN - WM_HOLD) / WM_OUT;
-  else return; // 1s gap — fully invisible
-  if (alpha <= 0.001) return;
+  if (local < WM_IN) alpha = local / WM_IN;                                     // fade in
+  else if (local < WM_IN + WM_HOLD) alpha = 1;                                  // hold solid
+  else if (local < WM_IN + WM_HOLD + WM_OUT) alpha = 1 - (local - WM_IN - WM_HOLD) / WM_OUT; // fade out
+  else return;                                                                  // 1s gap
+  if (alpha <= 0.002) return;
 
   const idx = Math.floor(t / WM_CYCLE) % WM_CORNERS.length;
   const [cx, cy] = WM_CORNERS[idx];
-  const size = Math.round(Math.min(W, H) * 0.16);
-  const pad = Math.round(Math.min(W, H) * 0.045);
-  const x = cx === 0 ? pad : W - pad - size;
-  const y = cy === 0 ? pad : H - pad - size;
 
+  // exact reference scale/position (relative to short side so it holds at any res)
+  const logoW = Math.round(W * 0.095);
+  const logoH = Math.round(logoW * (wmLogo.naturalHeight / (wmLogo.naturalWidth || 1) || 1));
+  const padX = Math.round(W * 0.072);
+  const padY = Math.round(W * 0.058);
+  const x = cx === 0 ? padX : W - padX - logoW;
+  const y = cy === 0 ? padY : H - padY - logoH;
+
+  // blur ↔ sharp: fully blurred at alpha 0, crystal clear at alpha 1
+  const blurPx = (1 - alpha) * logoW * 0.14;
   ctx.save();
-  ctx.globalAlpha = Math.min(1, alpha) * 0.92;
-  // subtle scale-in on the fade so the appearance reads crisply
-  const s = 0.94 + 0.06 * Math.min(1, alpha);
-  const dw = size * s, dh = size * s;
-  ctx.shadowColor = "rgba(0,0,0,0.55)";
-  ctx.shadowBlur = size * 0.16;
-  ctx.drawImage(wmLogo, x + (size - dw) / 2, y + (size - dh) / 2, dw, dh);
+  ctx.globalAlpha = Math.min(1, alpha);
+  if (blurPx > 0.3) ctx.filter = `blur(${blurPx.toFixed(2)}px)`;
+  ctx.drawImage(wmLogo, x, y, logoW, logoH);
+  ctx.filter = "none";
   ctx.restore();
 }
+
 
 /* ---------------- Editor ---------------- */
 function Editor() {
