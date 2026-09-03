@@ -869,20 +869,26 @@ function drawFrame(
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
-/* ---------------- LOGO WATERMARK (reference-video exact match) ----------------
+/* ---------------- LOGO WATERMARK (V10 timing pattern) ----------------
    Geometry measured from the reference clip (1080x1920):
      logo width  ≈ 103px  → 0.095 * canvas width
      right inset ≈  78px  → 0.072 * W ;  top inset ≈ 62px → 0.058 * W
-   Timing per corner: fade-in 1s (blur → sharp) → hold 1s solid → fade-out 1s
-   (sharp → blur) → 1s gap → next corner. 4s cycle, diagonal cross rotation. */
-const WM_IN = 1.0, WM_HOLD = 1.0, WM_OUT = 1.0, WM_GAP = 1.0;
-const WM_CYCLE = WM_IN + WM_HOLD + WM_OUT + WM_GAP;
-const WM_CORNERS: Array<[number, number]> = [
-  [1, 0], // top-right (as the reference video starts)
-  [0, 1], // bottom-left
-  [0, 0], // top-left
-  [1, 1], // bottom-right
+   Timing cycle (12s, loops):
+     0–1s   top-right   : fade-in, blur → sharp
+     1–5s   top-right   : solid hold (4s)
+     5–6s   gap (invisible)
+     6–8s   bottom-left : visible 2s (fast blur-in / blur-out at the edges)
+     8–9s   gap
+     9–12s  top-right   : visible 3s                                          */
+type WmSeg = { dur: number; corner: [number, number] | null; fadeIn: number; fadeOut: number };
+const WM_SCHEDULE: WmSeg[] = [
+  { dur: 5, corner: [1, 0], fadeIn: 1.0, fadeOut: 0.0 },   // top-right: 1s fade-in + 4s hold
+  { dur: 1, corner: null, fadeIn: 0, fadeOut: 0 },         // gap
+  { dur: 2, corner: [0, 1], fadeIn: 0.35, fadeOut: 0.35 }, // bottom-left: 2s
+  { dur: 1, corner: null, fadeIn: 0, fadeOut: 0 },         // gap
+  { dur: 3, corner: [1, 0], fadeIn: 0.35, fadeOut: 0.35 }, // back to top-right: 3s
 ];
+const WM_CYCLE = WM_SCHEDULE.reduce((s, x) => s + x.dur, 0);
 
 let wmLogo: HTMLImageElement | null = null;
 let wmLogoReady = false;
@@ -897,18 +903,21 @@ export function preloadWatermarkLogo() {
 
 function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
   if (!wmLogo || !wmLogoReady) return;
-  const local = ((t % WM_CYCLE) + WM_CYCLE) % WM_CYCLE;
-  let alpha = 0;
-  if (local < WM_IN) alpha = local / WM_IN;                                     // fade in
-  else if (local < WM_IN + WM_HOLD) alpha = 1;                                  // hold solid
-  else if (local < WM_IN + WM_HOLD + WM_OUT) alpha = 1 - (local - WM_IN - WM_HOLD) / WM_OUT; // fade out
-  else return;                                                                  // 1s gap
+  let local = ((t % WM_CYCLE) + WM_CYCLE) % WM_CYCLE;
+  let seg: WmSeg | null = null;
+  for (const s of WM_SCHEDULE) {
+    if (local < s.dur) { seg = s; break; }
+    local -= s.dur;
+  }
+  if (!seg || !seg.corner) return;
+
+  let alpha = 1;
+  if (seg.fadeIn > 0 && local < seg.fadeIn) alpha = local / seg.fadeIn;
+  else if (seg.fadeOut > 0 && local > seg.dur - seg.fadeOut) alpha = (seg.dur - local) / seg.fadeOut;
+  alpha = Math.max(0, Math.min(1, alpha));
   if (alpha <= 0.002) return;
 
-  const idx = Math.floor(t / WM_CYCLE) % WM_CORNERS.length;
-  const [cx, cy] = WM_CORNERS[idx];
-
-  // exact reference scale/position (relative to short side so it holds at any res)
+  const [cx, cy] = seg.corner;
   const logoW = Math.round(W * 0.095);
   const logoH = Math.round(logoW * (wmLogo.naturalHeight / (wmLogo.naturalWidth || 1) || 1));
   const padX = Math.round(W * 0.072);
@@ -919,7 +928,7 @@ function drawWatermark(ctx: CanvasRenderingContext2D, W: number, H: number, t: n
   // blur ↔ sharp: fully blurred at alpha 0, crystal clear at alpha 1
   const blurPx = (1 - alpha) * logoW * 0.14;
   ctx.save();
-  ctx.globalAlpha = Math.min(1, alpha);
+  ctx.globalAlpha = alpha;
   if (blurPx > 0.3) ctx.filter = `blur(${blurPx.toFixed(2)}px)`;
   ctx.drawImage(wmLogo, x, y, logoW, logoH);
   ctx.filter = "none";
