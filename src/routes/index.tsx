@@ -1124,17 +1124,27 @@ function Editor() {
 
 
   async function tryGenerate() {
-    if (!audioFile || !beats || filledCount === 0) return;
-    // Daily limit gate
-    const u = getUsageToday();
-    setUsage(u);
-    if (u >= dailyLimit()) {
-      setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई.`);
-      if (!pro) setShowLimitReached(true);
-      return;
+    try {
+      if (stage === "preparing" || stage === "rendering" || stage === "ad") return;
+      if (!audioFile) { setLog("पहले music select करें."); return; }
+      if (filledCount === 0) { setLog("कम से कम 1 photo चुनें."); return; }
+      if (!beats) { setLog("Audio अभी analyse हो रहा है — 1 सेकंड रुकें…"); return; }
+      // Daily limit gate
+      const u = getUsageToday();
+      setUsage(u);
+      if (u >= dailyLimit()) {
+        setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई.`);
+        setShowLimitReached(true);
+        return;
+      }
+      // 2-tap flow: no extra modal — quality is already chosen inline
+      if (!pro) { setStage("ad"); return; }
+      await doRender();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setStage("ready");
+      setLog(`GO error: ${msg}`);
     }
-    // 2-tap flow: no extra modal — quality is already chosen inline
-    if (!pro) setStage("ad"); else void doRender();
   }
 
   function confirmQuality(q: QualityKey) {
