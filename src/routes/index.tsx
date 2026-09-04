@@ -1231,9 +1231,15 @@ function Editor() {
       for (let i = 0; i < photos.length; i += batch) {
         const part = await Promise.all(photos.slice(i, i + batch).map(decodeOne));
         imgs.push(...part);
-        setLog(`फोटो तैयार हो रही हैं… ${Math.min(photos.length, i + batch)}/${photos.length}`);
+        const done = Math.min(photos.length, i + batch);
+        setPrepIdx(done);
+        setPrepLabel(`Asset ${done} music beats के साथ sync हुआ`);
+        setLog(`फोटो तैयार हो रही हैं… ${done}/${photos.length}`);
         await waitForNextPaint(); // yield → UI never freezes during decode
       }
+      setPrepIdx(photos.length);
+      setPrepLabel("सभी assets तैयार — रेंडरिंग शुरू…");
+      await waitForNextPaint();
 
       // ── SUBJECT CUTOUTS (once per photo, reused for every frame) ──
       // Foreground/background split used only on drop hits; ~0ms per frame at render time.
