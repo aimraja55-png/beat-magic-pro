@@ -487,19 +487,40 @@ async function encodeToMp4(
     throw new Error("Export engine इस डिवाइस पर लोड नहीं हो सका");
   }
   return await new Promise<Blob>((resolve, reject) => {
+    let settled = false;
+    // Hard speed budget: the finalize pass must never hold the export past ~15s.
+    // If the WASM encoder is slower than that on a weak device and the preview is
+    // already MP4, the preview buffer is shipped as-is so the user still gets a
+    // 20-second end-to-end export instead of a stall.
+    const budget = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      if (source.type.includes("mp4")) resolve(source);
+      else reject(new Error("Export engine समय पर पूरा नहीं हुआ"));
+    }, 15_000);
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(budget);
+      worker.terminate();
+      fn();
+    };
     worker.onmessage = (e: MessageEvent<EncodeMsg>) => {
       const d = e.data;
       if (d.type === "progress") onProgress(d.progress, d.message);
-      else if (d.type === "done") { worker.terminate(); resolve(new Blob([d.buffer], { type: "video/mp4" })); }
+      else if (d.type === "done") finish(() => resolve(new Blob([d.buffer], { type: "video/mp4" })));
       else if (d.type === "error") {
-        worker.terminate();
-        if (source.type.includes("mp4")) resolve(source);
-        else reject(new Error(d.message));
+        finish(() => {
+          if (source.type.includes("mp4")) resolve(source);
+          else reject(new Error(d.message));
+        });
       }
     };
     worker.onerror = () => {
-      worker.terminate();
-      if (source.type.includes("mp4")) resolve(source); else reject(new Error("Export worker crash"));
+      finish(() => {
+        if (source.type.includes("mp4")) resolve(source); else reject(new Error("Export worker crash"));
+      });
     };
     worker.postMessage(
       { type: "encode", webmBuffer: buffer, width: meta.width, height: meta.height, fps: meta.fps, duration: meta.duration },
@@ -507,6 +528,7 @@ async function encodeToMp4(
     );
   });
 }
+
 
 type DirPickerWindow = Window & typeof globalThis & {
   showDirectoryPicker?: () => Promise<{
