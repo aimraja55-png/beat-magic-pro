@@ -2224,10 +2224,11 @@ function ExportHud({ pct, message }: { pct: number; message: string }) {
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div className="text-3xl font-black tabular-nums">{Math.max(1, Math.round(pct))}%</div>
-            <div className="text-[9px] uppercase tracking-[0.28em] text-white/50">Exporting</div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-white/50">Exporting</div>
           </div>
         </div>
-        <div className="mt-5 text-sm font-bold">H.264 / AAC MP4 रेंडर हो रहा है</div>
+        <div className="mt-5 text-sm font-bold">Export Progress — H.264 / AAC MP4</div>
+
         <div className="mt-1 min-h-[16px] text-[11px] text-white/60">{message}</div>
         <div className="mt-3 text-[10px] text-white/40">moov atom + duration metadata inject — 0s वाली खराब फ़ाइल कभी नहीं</div>
       </div>
