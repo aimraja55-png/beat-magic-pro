@@ -2036,6 +2036,31 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
   );
 }
 
+function PreparationOverlay({ idx, total, label }: { idx: number; total: number; label: string }) {
+  const pct = total > 0 ? Math.round((idx / total) * 100) : 0;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-6 backdrop-blur-2xl">
+      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-gradient-to-br from-[#150a22] to-[#0b0617] p-7 text-center">
+        <div className="text-[10px] uppercase tracking-[0.35em] text-white/45">Asset Preparation</div>
+        <div className="relative mx-auto mt-6 h-36 w-36">
+          <div className="absolute inset-0 animate-spin rounded-full border-2 border-[#ff2e88]/30 border-t-[#ff2e88]" />
+          <div className="absolute inset-3 animate-[spin_2.4s_linear_infinite_reverse] rounded-full border-2 border-[#7c5cff]/30 border-b-[#7c5cff]" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-3xl font-black tabular-nums">{idx}/{total || "…"}</div>
+            <div className="text-[10px] tracking-[0.2em] text-white/50">ASSETS</div>
+          </div>
+        </div>
+        <div className="mt-6 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-gradient-to-r from-[#ff2e88] to-[#ffb347] transition-all duration-300"
+            style={{ width: `${pct}%` }} />
+        </div>
+        <p className="mt-4 text-sm font-semibold text-white/85">Photos music के साथ sync हो रही हैं…</p>
+        <p className="mt-1 text-[11px] text-white/50">{label || "Analyse • Match • Prepare"}</p>
+      </div>
+    </div>
+  );
+}
+
 function RenderingOverlay({ progress, phase, log }: { progress: number; phase: "record" | "encode" | ""; log: string }) {
   const pct = Math.round(progress * 100);
   return (
