@@ -1124,17 +1124,27 @@ function Editor() {
 
 
   async function tryGenerate() {
-    if (!audioFile || !beats || filledCount === 0) return;
-    // Daily limit gate
-    const u = getUsageToday();
-    setUsage(u);
-    if (u >= dailyLimit()) {
-      setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई.`);
-      if (!pro) setShowLimitReached(true);
-      return;
+    try {
+      if (stage === "preparing" || stage === "rendering" || stage === "ad") return;
+      if (!audioFile) { setLog("पहले music select करें."); return; }
+      if (filledCount === 0) { setLog("कम से कम 1 photo चुनें."); return; }
+      if (!beats) { setLog("Audio अभी analyse हो रहा है — 1 सेकंड रुकें…"); return; }
+      // Daily limit gate
+      const u = getUsageToday();
+      setUsage(u);
+      if (u >= dailyLimit()) {
+        setLog(`⛔ आज की सीमा (${dailyLimit()} videos) पूरी हो गई.`);
+        setShowLimitReached(true);
+        return;
+      }
+      // 2-tap flow: no extra modal — quality is already chosen inline
+      if (!pro) { setStage("ad"); return; }
+      await doRender();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setStage("ready");
+      setLog(`GO error: ${msg}`);
     }
-    // 2-tap flow: no extra modal — quality is already chosen inline
-    if (!pro) setStage("ad"); else void doRender();
   }
 
   function confirmQuality(q: QualityKey) {
@@ -1221,9 +1231,15 @@ function Editor() {
       for (let i = 0; i < photos.length; i += batch) {
         const part = await Promise.all(photos.slice(i, i + batch).map(decodeOne));
         imgs.push(...part);
-        setLog(`फोटो तैयार हो रही हैं… ${Math.min(photos.length, i + batch)}/${photos.length}`);
+        const done = Math.min(photos.length, i + batch);
+        setPrepIdx(done);
+        setPrepLabel(`Asset ${done} music beats के साथ sync हुआ`);
+        setLog(`फोटो तैयार हो रही हैं… ${done}/${photos.length}`);
         await waitForNextPaint(); // yield → UI never freezes during decode
       }
+      setPrepIdx(photos.length);
+      setPrepLabel("सभी assets तैयार — रेंडरिंग शुरू…");
+      await waitForNextPaint();
 
       // ── SUBJECT CUTOUTS (once per photo, reused for every frame) ──
       // Foreground/background split used only on drop hits; ~0ms per frame at render time.
@@ -1342,6 +1358,9 @@ function Editor() {
       const outMime = isMp4 ? "video/mp4" : "video/webm";
       const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: outMime }))));
 
+      // PHASE 2 — automatic transition into the processing interface (1% → 100%)
+      setStage("rendering");
+      setProgress(1);
       const recordStart = performance.now();
       rec.start(250);
       await ac.resume();
@@ -1606,14 +1625,16 @@ function Editor() {
         )}
 
         {/* STEP 4: GO */}
-        {beats && stage !== "rendering" && stage !== "done" && stage !== "ad" && (
+        {beats && stage !== "rendering" && stage !== "preparing" && stage !== "done" && stage !== "ad" && (
           <div className="mt-6">
             <button type="button" disabled={!canGenerate}
               onClick={() => void tryGenerate()}
+              
               className="group relative block w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40">
               <span className="relative z-10">{canGenerate ? "GO ▶" : "GO (पहले फोटो भरें)"}</span>
               <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
             </button>
+            {log && <p className="mt-2 text-center text-[11px] text-white/70">{log}</p>}
             {remainingToday === 0 && (
               <p className="mt-2 text-center text-[11px] text-red-300">
                 आज की limit पूरी — कल फिर मिलेंगे या Pro बनें
@@ -1626,6 +1647,11 @@ function Editor() {
           <AdCountdown seconds={AD_SECONDS} onComplete={() => void doRender()}
             onSkip={pro ? () => void doRender() : undefined} />
         )}
+
+        {stage === "preparing" && (
+          <PreparationOverlay idx={prepIdx} total={prepTotal} label={prepLabel} />
+        )}
+
 
         {stage === "rendering" && (
           <RenderingOverlay progress={progress} phase={phase} log={log} />
@@ -2005,6 +2031,31 @@ function LimitReachedModal({ onClose, onSubscribed }: { onClose: () => void; onS
           className="mt-2 w-full rounded-xl border border-emerald-400/40 bg-emerald-400/10 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-400/20">
           भुगतान पूरा — Pro activate करें
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PreparationOverlay({ idx, total, label }: { idx: number; total: number; label: string }) {
+  const pct = total > 0 ? Math.round((idx / total) * 100) : 0;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-6 backdrop-blur-2xl">
+      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-gradient-to-br from-[#150a22] to-[#0b0617] p-7 text-center">
+        <div className="text-[10px] uppercase tracking-[0.35em] text-white/45">Asset Preparation</div>
+        <div className="relative mx-auto mt-6 h-36 w-36">
+          <div className="absolute inset-0 animate-spin rounded-full border-2 border-[#ff2e88]/30 border-t-[#ff2e88]" />
+          <div className="absolute inset-3 animate-[spin_2.4s_linear_infinite_reverse] rounded-full border-2 border-[#7c5cff]/30 border-b-[#7c5cff]" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-3xl font-black tabular-nums">{idx}/{total || "…"}</div>
+            <div className="text-[10px] tracking-[0.2em] text-white/50">ASSETS</div>
+          </div>
+        </div>
+        <div className="mt-6 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-gradient-to-r from-[#ff2e88] to-[#ffb347] transition-all duration-300"
+            style={{ width: `${pct}%` }} />
+        </div>
+        <p className="mt-4 text-sm font-semibold text-white/85">Photos music के साथ sync हो रही हैं…</p>
+        <p className="mt-1 text-[11px] text-white/50">{label || "Analyse • Match • Prepare"}</p>
       </div>
     </div>
   );
