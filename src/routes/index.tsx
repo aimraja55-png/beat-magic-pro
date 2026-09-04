@@ -1358,6 +1358,9 @@ function Editor() {
       const outMime = isMp4 ? "video/mp4" : "video/webm";
       const recDone = new Promise<Blob>((r) => (rec.onstop = () => r(new Blob(chunks, { type: outMime }))));
 
+      // PHASE 2 — automatic transition into the processing interface (1% → 100%)
+      setStage("rendering");
+      setProgress(1);
       const recordStart = performance.now();
       rec.start(250);
       await ac.resume();
