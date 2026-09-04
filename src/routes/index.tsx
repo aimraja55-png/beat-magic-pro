@@ -1616,14 +1616,16 @@ function Editor() {
         )}
 
         {/* STEP 4: GO */}
-        {beats && stage !== "rendering" && stage !== "done" && stage !== "ad" && (
+        {beats && stage !== "rendering" && stage !== "preparing" && stage !== "done" && stage !== "ad" && (
           <div className="mt-6">
             <button type="button" disabled={!canGenerate}
               onClick={() => void tryGenerate()}
+              onPointerUp={() => { if (canGenerate) void tryGenerate(); }}
               className="group relative block w-full overflow-hidden rounded-3xl bg-gradient-to-r from-[#ff2e88] via-[#ff6a3d] to-[#ffb347] py-7 text-2xl font-black tracking-[0.25em] text-black shadow-[0_20px_60px_-15px_rgba(255,46,136,0.7)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40">
               <span className="relative z-10">{canGenerate ? "GO ▶" : "GO (पहले फोटो भरें)"}</span>
               <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-1000 group-hover:translate-x-full" />
             </button>
+            {log && <p className="mt-2 text-center text-[11px] text-white/70">{log}</p>}
             {remainingToday === 0 && (
               <p className="mt-2 text-center text-[11px] text-red-300">
                 आज की limit पूरी — कल फिर मिलेंगे या Pro बनें
