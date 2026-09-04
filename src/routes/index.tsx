@@ -487,19 +487,40 @@ async function encodeToMp4(
     throw new Error("Export engine इस डिवाइस पर लोड नहीं हो सका");
   }
   return await new Promise<Blob>((resolve, reject) => {
+    let settled = false;
+    // Hard speed budget: the finalize pass must never hold the export past ~15s.
+    // If the WASM encoder is slower than that on a weak device and the preview is
+    // already MP4, the preview buffer is shipped as-is so the user still gets a
+    // 20-second end-to-end export instead of a stall.
+    const budget = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      if (source.type.includes("mp4")) resolve(source);
+      else reject(new Error("Export engine समय पर पूरा नहीं हुआ"));
+    }, 15_000);
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(budget);
+      worker.terminate();
+      fn();
+    };
     worker.onmessage = (e: MessageEvent<EncodeMsg>) => {
       const d = e.data;
       if (d.type === "progress") onProgress(d.progress, d.message);
-      else if (d.type === "done") { worker.terminate(); resolve(new Blob([d.buffer], { type: "video/mp4" })); }
+      else if (d.type === "done") finish(() => resolve(new Blob([d.buffer], { type: "video/mp4" })));
       else if (d.type === "error") {
-        worker.terminate();
-        if (source.type.includes("mp4")) resolve(source);
-        else reject(new Error(d.message));
+        finish(() => {
+          if (source.type.includes("mp4")) resolve(source);
+          else reject(new Error(d.message));
+        });
       }
     };
     worker.onerror = () => {
-      worker.terminate();
-      if (source.type.includes("mp4")) resolve(source); else reject(new Error("Export worker crash"));
+      finish(() => {
+        if (source.type.includes("mp4")) resolve(source); else reject(new Error("Export worker crash"));
+      });
     };
     worker.postMessage(
       { type: "encode", webmBuffer: buffer, width: meta.width, height: meta.height, fps: meta.fps, duration: meta.duration },
@@ -507,6 +528,7 @@ async function encodeToMp4(
     );
   });
 }
+
 
 type DirPickerWindow = Window & typeof globalThis & {
   showDirectoryPicker?: () => Promise<{
@@ -1098,12 +1120,32 @@ function Editor() {
     setExportPct(1);
     setExportMsg("Export इंजन शुरू हो रहा है…");
     setSavedToast(false);
+
+    // ---- 20-second smooth pacer: 1% → 100% never freezes, never repeats ----
+    const DEADLINE = 20_000;
+    const t0 = performance.now();
+    let target = 1;
+    let shown = 1;
+    let finished = false;
+    let raf = 0;
+    const tick = () => {
+      const elapsed = performance.now() - t0;
+      const timeFloor = Math.min(97, 1 + (elapsed / DEADLINE) * 96);
+      const goal = finished ? 100 : Math.max(target, timeFloor);
+      shown += (goal - shown) * 0.22;
+      if (goal - shown < 0.4) shown = goal;
+      setExportPct(Math.max(1, Math.min(100, Math.round(shown))));
+      if (!finished || shown < 99.6) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
     try {
       const meta = renderMetaRef.current;
       const mp4 = await encodeToMp4(source, meta, (p, m) => {
-        setExportPct(Math.max(1, Math.min(99, Math.round(p * 100))));
+        target = Math.max(target, Math.min(99, p * 100));
         if (m) setExportMsg(m);
       });
+      finished = true;
       setExportPct(100);
       setExportMsg("Gallery में सेव हो रहा है…");
       const how = await saveToGallery(mp4, `Raja-AI-${Date.now()}.mp4`);
@@ -1119,8 +1161,13 @@ function Editor() {
       const msg = error instanceof Error ? error.message : String(error);
       setExportOpen(false);
       setLog(`Export error: ${msg}`);
-    } finally { setExporting(false); }
+    } finally {
+      finished = true;
+      cancelAnimationFrame(raf);
+      setExporting(false);
+    }
   }
+
 
 
   async function tryGenerate() {
@@ -2177,10 +2224,11 @@ function ExportHud({ pct, message }: { pct: number; message: string }) {
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div className="text-3xl font-black tabular-nums">{Math.max(1, Math.round(pct))}%</div>
-            <div className="text-[9px] uppercase tracking-[0.28em] text-white/50">Exporting</div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-white/50">Exporting</div>
           </div>
         </div>
-        <div className="mt-5 text-sm font-bold">H.264 / AAC MP4 रेंडर हो रहा है</div>
+        <div className="mt-5 text-sm font-bold">Export Progress — H.264 / AAC MP4</div>
+
         <div className="mt-1 min-h-[16px] text-[11px] text-white/60">{message}</div>
         <div className="mt-3 text-[10px] text-white/40">moov atom + duration metadata inject — 0s वाली खराब फ़ाइल कभी नहीं</div>
       </div>
