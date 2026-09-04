@@ -1648,6 +1648,11 @@ function Editor() {
             onSkip={pro ? () => void doRender() : undefined} />
         )}
 
+        {stage === "preparing" && (
+          <PreparationOverlay idx={prepIdx} total={prepTotal} label={prepLabel} />
+        )}
+
+
         {stage === "rendering" && (
           <RenderingOverlay progress={progress} phase={phase} log={log} />
         )}
