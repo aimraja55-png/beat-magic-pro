@@ -1120,12 +1120,32 @@ function Editor() {
     setExportPct(1);
     setExportMsg("Export इंजन शुरू हो रहा है…");
     setSavedToast(false);
+
+    // ---- 20-second smooth pacer: 1% → 100% never freezes, never repeats ----
+    const DEADLINE = 20_000;
+    const t0 = performance.now();
+    let target = 1;
+    let shown = 1;
+    let finished = false;
+    let raf = 0;
+    const tick = () => {
+      const elapsed = performance.now() - t0;
+      const timeFloor = Math.min(97, 1 + (elapsed / DEADLINE) * 96);
+      const goal = finished ? 100 : Math.max(target, timeFloor);
+      shown += (goal - shown) * 0.22;
+      if (goal - shown < 0.4) shown = goal;
+      setExportPct(Math.max(1, Math.min(100, Math.round(shown))));
+      if (!finished || shown < 99.6) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
     try {
       const meta = renderMetaRef.current;
       const mp4 = await encodeToMp4(source, meta, (p, m) => {
-        setExportPct(Math.max(1, Math.min(99, Math.round(p * 100))));
+        target = Math.max(target, Math.min(99, p * 100));
         if (m) setExportMsg(m);
       });
+      finished = true;
       setExportPct(100);
       setExportMsg("Gallery में सेव हो रहा है…");
       const how = await saveToGallery(mp4, `Raja-AI-${Date.now()}.mp4`);
@@ -1141,8 +1161,13 @@ function Editor() {
       const msg = error instanceof Error ? error.message : String(error);
       setExportOpen(false);
       setLog(`Export error: ${msg}`);
-    } finally { setExporting(false); }
+    } finally {
+      finished = true;
+      cancelAnimationFrame(raf);
+      setExporting(false);
+    }
   }
+
 
 
   async function tryGenerate() {
