@@ -669,21 +669,21 @@ function drawFrame(
       rot = style.rotDir * 0.08 * (eased - 0.5);
       dx = Math.sin(progress * Math.PI) * 40 * style.panX; break;
     case "tiltShake": {
-      scale *= 1.03 + 0.18 * punch;
-      rot = style.rotDir * (0.02 + 0.05 * punch);
-      const amp = punch > 0.35 ? 45 * (punch - 0.3) : 0;
-      dx = (Math.random() - 0.5) * amp; dy = (Math.random() - 0.5) * amp; break;
+      // Photo itself never jitters — the framing glides instead (clean visuals)
+      scale *= 1.03 + 0.1 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t) * 18; dy = Math.cos(t * 0.8) * 12; break;
     }
     case "whipPan": scale *= 1.05; dx = (progress - 0.5) * W * 0.6 * style.rotDir; break;
-    case "dolly": scale *= 1 + 0.35 * eased + 0.25 * punch; dy = -eased * 30; break;
+    case "dolly": scale *= 1 + 0.35 * eased + 0.18 * punch; dy = -eased * 30; break;
     case "handheld": {
-      scale *= 1.04 + 0.14 * punch;
+      scale *= 1.04 + 0.08 * punch;
       const t = progress * Math.PI * 4;
-      const jitter = punch > 0.35 ? 24 * (punch - 0.3) : 0;
-      dx = Math.sin(t + style.seed) * 8 + (Math.random() - 0.5) * jitter;
-      dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
-      rot = Math.sin(t * 0.4) * 0.015; break;
+      dx = Math.sin(t + style.seed) * 10;
+      dy = Math.cos(t * 0.9) * 8;
+      rot = Math.sin(t * 0.4) * 0.01; break;
     }
+
     case "parallax3D": {
       scale *= 1.1 + 0.08 * eased + 0.15 * punch;
       const t = progress * Math.PI * 2;
