@@ -1465,6 +1465,13 @@ function Editor() {
       if (renderIdRef.current !== myId) return;
 
       const actualDuration = (performance.now() - recordStart) / 1000;
+      // Duration lock: the export encoder must stamp the REAL length into the moov
+      // atom, otherwise the phone gallery shows "0 seconds" for the saved file.
+      renderMetaRef.current = {
+        ...renderMetaRef.current,
+        duration: Math.max(1, Math.round(actualDuration * 1000) / 1000),
+      };
+
       await new Promise((r) => setTimeout(r, 200));
       rec.requestData();
       await new Promise((r) => setTimeout(r, 120));
