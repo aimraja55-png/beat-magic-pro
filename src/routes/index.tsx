@@ -828,48 +828,36 @@ function drawFrame(
     ctx.drawImage(img, ix, iy, insetW, insetH);
     ctx.restore();
   }
-  if (flash > 0.35) {
-    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
+  // Flash is intentionally very soft now: a hint of lift on the biggest hits only,
+  // never an eye-stabbing white frame.
+  if (flash > 0.62) {
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.1, (flash - 0.62) * 0.26)})`;
     ctx.fillRect(0, 0, W, H);
   }
-  if (!lowPower && shimmer > 0.15) {
-    ctx.globalAlpha = 0.06 + shimmer * 0.05;
-    for (let i = 0; i < 40; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
-      ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
-    }
-    ctx.globalAlpha = 1;
-  }
-  // ── BEAT-SYNCED SUBJECT LAYERING (drop only) ──
-  // Normal timeline = untouched full-frame composite. On a bass/drop transient the
-  // pre-computed subject cutout is lifted off a stylised backdrop with a zoom-punch,
-  // parallax shift and neon edge glow, then merges back as the phrase decays.
-  if (cutout && dropSplit > 0.04) {
-    const k = Math.min(1, dropSplit);
+  // ── SUBJECT-FORWARD LAYERING (background removed, always on) ──
+  // The pre-computed cutout keeps the person crisp in front of a softly darkened
+  // backdrop and glides on its own smooth path — clean, no neon glow, no bloom.
+  if (cutout) {
+    const k = Math.max(0.34, Math.min(1, dropSplit));
     ctx.save();
-    ctx.globalCompositeOperation = "overlay";
-    ctx.globalAlpha = 0.42 * k;
-    ctx.fillStyle = style.filter === "noir" ? "#0b0b14" : style.rotDir > 0 ? "#ff2e88" : "#12d1ff";
-    ctx.fillRect(0, 0, W, H);
-    ctx.restore();
-    ctx.save();
-    ctx.globalAlpha = 0.3 * k;
-    ctx.fillStyle = "#000";
+    ctx.globalAlpha = 0.16 + 0.14 * k;
+    ctx.fillStyle = "#05040a";
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
 
     const fit = Math.min(W / cutout.width, H / cutout.height);
-    const s = fit * (1 + 0.16 * k + punch * 0.12 * k);
-    const dw = cutout.width * s, dh = cutout.height * s;
-    const px = Math.sin(progress * Math.PI * 2) * W * 0.035 * k * style.panX;
-    const py = -H * 0.02 * k;
+    const s = fit * (1 + 0.05 + 0.07 * k + punch * 0.05);
+    const cw = cutout.width * s, ch = cutout.height * s;
+    const px = Math.sin(progress * Math.PI) * W * 0.03 * style.panX + dx * 0.25;
+    const py = -H * 0.012 * k + dy * 0.25;
     ctx.save();
-    ctx.shadowColor = style.rotDir > 0 ? "rgba(255,46,136,0.9)" : "rgba(60,220,255,0.9)";
-    ctx.shadowBlur = (16 + 64 * k) * (W / 1080);
-    ctx.globalAlpha = Math.min(1, 0.72 + 0.28 * k);
-    ctx.drawImage(cutout, (W - dw) / 2 + px, (H - dh) / 2 + py, dw, dh);
+    ctx.globalAlpha = entryAlpha;
+    ctx.filter = progress < 0.12 ? `blur(${(0.12 - progress) * 40}px)` : "none";
+    ctx.drawImage(cutout, (W - cw) / 2 + px, (H - ch) / 2 + py, cw, ch);
+    ctx.filter = "none";
     ctx.restore();
   }
+
 
   const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
   g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
