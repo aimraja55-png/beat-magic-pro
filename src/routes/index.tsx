@@ -727,10 +727,8 @@ function drawFrame(
       dx = style.panX * 30 * eased; dy = style.panY * 20 * eased; break;
     }
   }
-  if (punch > 0.55 && style.base !== "smoothPan") {
-    const amp = 20 * (punch - 0.5);
-    dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
-  }
+  // (no random per-frame shake — motion stays smooth and professional)
+
   let entryAlpha = 1;
   if (progress < 0.25) {
     const p = progress / 0.25; const inv = 1 - EASE(p); entryAlpha = EASE(p);
