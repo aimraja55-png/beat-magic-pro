@@ -118,8 +118,11 @@ async function encode({ webmBuffer, width, height, fps, duration }: EncodeReques
       inputName,
       "-r",
       String(fps),
+      "-t",
+      duration.toFixed(3),
       "-s",
       `${width}x${height}`,
+
       "-c:v",
       "libx264",
       "-preset",

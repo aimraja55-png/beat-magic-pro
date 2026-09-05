@@ -669,21 +669,21 @@ function drawFrame(
       rot = style.rotDir * 0.08 * (eased - 0.5);
       dx = Math.sin(progress * Math.PI) * 40 * style.panX; break;
     case "tiltShake": {
-      scale *= 1.03 + 0.18 * punch;
-      rot = style.rotDir * (0.02 + 0.05 * punch);
-      const amp = punch > 0.35 ? 45 * (punch - 0.3) : 0;
-      dx = (Math.random() - 0.5) * amp; dy = (Math.random() - 0.5) * amp; break;
+      // Photo itself never jitters — the framing glides instead (clean visuals)
+      scale *= 1.03 + 0.1 * punch;
+      const t = progress * Math.PI * 2;
+      dx = Math.sin(t) * 18; dy = Math.cos(t * 0.8) * 12; break;
     }
     case "whipPan": scale *= 1.05; dx = (progress - 0.5) * W * 0.6 * style.rotDir; break;
-    case "dolly": scale *= 1 + 0.35 * eased + 0.25 * punch; dy = -eased * 30; break;
+    case "dolly": scale *= 1 + 0.35 * eased + 0.18 * punch; dy = -eased * 30; break;
     case "handheld": {
-      scale *= 1.04 + 0.14 * punch;
+      scale *= 1.04 + 0.08 * punch;
       const t = progress * Math.PI * 4;
-      const jitter = punch > 0.35 ? 24 * (punch - 0.3) : 0;
-      dx = Math.sin(t + style.seed) * 8 + (Math.random() - 0.5) * jitter;
-      dy = Math.cos(t * 0.9) * 6 + (Math.random() - 0.5) * jitter;
-      rot = Math.sin(t * 0.4) * 0.015; break;
+      dx = Math.sin(t + style.seed) * 10;
+      dy = Math.cos(t * 0.9) * 8;
+      rot = Math.sin(t * 0.4) * 0.01; break;
     }
+
     case "parallax3D": {
       scale *= 1.1 + 0.08 * eased + 0.15 * punch;
       const t = progress * Math.PI * 2;
@@ -727,10 +727,8 @@ function drawFrame(
       dx = style.panX * 30 * eased; dy = style.panY * 20 * eased; break;
     }
   }
-  if (punch > 0.55 && style.base !== "smoothPan") {
-    const amp = 20 * (punch - 0.5);
-    dx += (Math.random() - 0.5) * amp; dy += (Math.random() - 0.5) * amp;
-  }
+  // (no random per-frame shake — motion stays smooth and professional)
+
   let entryAlpha = 1;
   if (progress < 0.25) {
     const p = progress / 0.25; const inv = 1 - EASE(p); entryAlpha = EASE(p);
@@ -793,12 +791,11 @@ function drawFrame(
   }
   ctx.filter = filter || "none";
   ctx.globalAlpha = entryAlpha;
-  const trails = lowPower
-    ? 1
-    : Math.min(6, Math.round(1 + punch * 5 + (style.base === "whipPan" ? 3 : 0)));
-  for (let k = trails; k >= 1; k--) {
+  // Subtle directional smear only on fast whips — no glow stacking, no bloom
+  const trails = lowPower ? 1 : Math.min(3, Math.round(1 + punch * 1.5 + (style.base === "whipPan" ? 2 : 0)));
+  for (let k = trails; k >= 2; k--) {
     const f = k / trails;
-    ctx.globalAlpha = entryAlpha * (0.14 + 0.15 * (1 - f));
+    ctx.globalAlpha = entryAlpha * 0.08 * (1 - f);
     ctx.save();
     ctx.translate(W / 2 + dx * (1 - f * 0.4), H / 2 + dy * (1 - f * 0.4));
     if (rot) ctx.rotate(rot * (1 - f * 0.3));
@@ -812,20 +809,8 @@ function drawFrame(
   ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
   ctx.filter = "none"; ctx.globalAlpha = 1;
-  if (!lowPower && shimmer > 0.25) {
-    ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.35 * shimmer;
-    const s = 10 * shimmer;
-    ctx.drawImage(img, W / 2 - dw / 2 + s + dx, H / 2 - dh / 2 + dy, dw, dh);
-    ctx.globalAlpha = 0.35 * shimmer;
-    ctx.drawImage(img, W / 2 - dw / 2 - s + dx, H / 2 - dh / 2 + dy, dw, dh);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
-  }
-  if (!lowPower && punch > 0.55) {
-    ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.5 * punch;
-    ctx.drawImage(img, W / 2 - dw / 2 + 22 * punch + dx, H / 2 - dh / 2 + dy, dw, dh);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
-  }
   ctx.restore();
+
   // photoMerge: picture-in-picture inset of the same image as an accent
   if (style.base === "photoMerge") {
     const insetW = W * 0.36;
@@ -843,51 +828,39 @@ function drawFrame(
     ctx.drawImage(img, ix, iy, insetW, insetH);
     ctx.restore();
   }
-  if (flash > 0.35) {
-    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.85, (flash - 0.35) * 1.7)})`;
+  // Flash is intentionally very soft now: a hint of lift on the biggest hits only,
+  // never an eye-stabbing white frame.
+  if (flash > 0.62) {
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(0.1, (flash - 0.62) * 0.26)})`;
     ctx.fillRect(0, 0, W, H);
   }
-  if (!lowPower && shimmer > 0.15) {
-    ctx.globalAlpha = 0.06 + shimmer * 0.05;
-    for (let i = 0; i < 40; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
-      ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
-    }
-    ctx.globalAlpha = 1;
-  }
-  // ── BEAT-SYNCED SUBJECT LAYERING (drop only) ──
-  // Normal timeline = untouched full-frame composite. On a bass/drop transient the
-  // pre-computed subject cutout is lifted off a stylised backdrop with a zoom-punch,
-  // parallax shift and neon edge glow, then merges back as the phrase decays.
-  if (cutout && dropSplit > 0.04) {
-    const k = Math.min(1, dropSplit);
+  // ── SUBJECT-FORWARD LAYERING (background removed, always on) ──
+  // The pre-computed cutout keeps the person crisp in front of a softly darkened
+  // backdrop and glides on its own smooth path — clean, no neon glow, no bloom.
+  if (cutout) {
+    const k = Math.max(0.34, Math.min(1, dropSplit));
     ctx.save();
-    ctx.globalCompositeOperation = "overlay";
-    ctx.globalAlpha = 0.42 * k;
-    ctx.fillStyle = style.filter === "noir" ? "#0b0b14" : style.rotDir > 0 ? "#ff2e88" : "#12d1ff";
-    ctx.fillRect(0, 0, W, H);
-    ctx.restore();
-    ctx.save();
-    ctx.globalAlpha = 0.3 * k;
-    ctx.fillStyle = "#000";
+    ctx.globalAlpha = 0.16 + 0.14 * k;
+    ctx.fillStyle = "#05040a";
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
 
     const fit = Math.min(W / cutout.width, H / cutout.height);
-    const s = fit * (1 + 0.16 * k + punch * 0.12 * k);
-    const dw = cutout.width * s, dh = cutout.height * s;
-    const px = Math.sin(progress * Math.PI * 2) * W * 0.035 * k * style.panX;
-    const py = -H * 0.02 * k;
+    const s = fit * (1 + 0.05 + 0.07 * k + punch * 0.05);
+    const cw = cutout.width * s, ch = cutout.height * s;
+    const px = Math.sin(progress * Math.PI) * W * 0.03 * style.panX + dx * 0.25;
+    const py = -H * 0.012 * k + dy * 0.25;
     ctx.save();
-    ctx.shadowColor = style.rotDir > 0 ? "rgba(255,46,136,0.9)" : "rgba(60,220,255,0.9)";
-    ctx.shadowBlur = (16 + 64 * k) * (W / 1080);
-    ctx.globalAlpha = Math.min(1, 0.72 + 0.28 * k);
-    ctx.drawImage(cutout, (W - dw) / 2 + px, (H - dh) / 2 + py, dw, dh);
+    ctx.globalAlpha = entryAlpha;
+    ctx.filter = progress < 0.12 ? `blur(${(0.12 - progress) * 40}px)` : "none";
+    ctx.drawImage(cutout, (W - cw) / 2 + px, (H - ch) / 2 + py, cw, ch);
+    ctx.filter = "none";
     ctx.restore();
   }
 
+
   const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
-  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.38)");
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
@@ -1292,7 +1265,7 @@ function Editor() {
       // Foreground/background split used only on drop hits; ~0ms per frame at render time.
       const cutouts: (CanvasImageSource & { width: number; height: number } | null)[] = [];
       for (let i = 0; i < imgs.length; i++) {
-        const c = lowEnd ? null : buildSubjectCutout(imgs[i], Math.max(W, H) * 0.6);
+        const c = buildSubjectCutout(imgs[i], Math.max(W, H) * (lowEnd ? 0.45 : 0.62));
         cutouts.push(c ? c.canvas : null);
         if (i % 2 === 1) await waitForNextPaint();
       }
@@ -1469,7 +1442,7 @@ function Editor() {
         // ── DROP-SYNCED LAYER SPLIT: rises on a bass transient, snaps back smoothly ──
         const target = punch > 0.6 ? Math.min(1, (punch - 0.6) / 0.32) : 0;
         dropSplit += (target - dropSplit) * (target > dropSplit ? 0.55 : 0.12);
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, lowPower ? 0 : dropSplit, item.cutout);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, dropSplit, item.cutout);
         if (drawWM) drawWatermark(ctx, W, H, t);
         // Throttle React updates to 1% steps — no re-render churn per frame
         const p = Math.min(0.95, (t / targetDuration) * 0.95);
@@ -1492,6 +1465,13 @@ function Editor() {
       if (renderIdRef.current !== myId) return;
 
       const actualDuration = (performance.now() - recordStart) / 1000;
+      // Duration lock: the export encoder must stamp the REAL length into the moov
+      // atom, otherwise the phone gallery shows "0 seconds" for the saved file.
+      renderMetaRef.current = {
+        ...renderMetaRef.current,
+        duration: Math.max(1, Math.round(actualDuration * 1000) / 1000),
+      };
+
       await new Promise((r) => setTimeout(r, 200));
       rec.requestData();
       await new Promise((r) => setTimeout(r, 120));
