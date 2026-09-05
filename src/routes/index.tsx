@@ -860,7 +860,7 @@ function drawFrame(
 
 
   const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.78);
-  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.38)");
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
@@ -1265,7 +1265,7 @@ function Editor() {
       // Foreground/background split used only on drop hits; ~0ms per frame at render time.
       const cutouts: (CanvasImageSource & { width: number; height: number } | null)[] = [];
       for (let i = 0; i < imgs.length; i++) {
-        const c = lowEnd ? null : buildSubjectCutout(imgs[i], Math.max(W, H) * 0.6);
+        const c = buildSubjectCutout(imgs[i], Math.max(W, H) * (lowEnd ? 0.45 : 0.62));
         cutouts.push(c ? c.canvas : null);
         if (i % 2 === 1) await waitForNextPaint();
       }
@@ -1442,7 +1442,7 @@ function Editor() {
         // ── DROP-SYNCED LAYER SPLIT: rises on a bass transient, snaps back smoothly ──
         const target = punch > 0.6 ? Math.min(1, (punch - 0.6) / 0.32) : 0;
         dropSplit += (target - dropSplit) * (target > dropSplit ? 0.55 : 0.12);
-        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, lowPower ? 0 : dropSplit, item.cutout);
+        if (item) drawFrame(ctx, item.img, W, H, item.style, local, punch, flash, shimmer, lowPower, dropSplit, item.cutout);
         if (drawWM) drawWatermark(ctx, W, H, t);
         // Throttle React updates to 1% steps — no re-render churn per frame
         const p = Math.min(0.95, (t / targetDuration) * 0.95);
